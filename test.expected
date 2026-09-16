@@ -1,0 +1,76 @@
+# vocab
+go
+resume
+sqlite
+のカ
+カフ
+フェ
+京都
+全文
+区の
+南投
+嘉義
+山茶
+山高
+投縣
+文檢
+於南
+於嘉
+日月
+月潭
+東京
+檢索
+池鄉
+渋谷
+潭紅
+產於
+紅茶
+縣魚
+義縣
+茶
+茶產
+言和
+語言
+谷区
+都渋
+里山
+阿里
+高山
+魚池
+강남
+남구
+별시
+서울
+울특
+특별
+# substring 魚池
+1
+# adjacency: 南投魚池 must not match 南投縣魚池
+0
+# two words ANDed
+1
+# mixed latin + cjk, case folded
+3
+# diacritics folded by unicode61
+3
+# japanese
+4
+# korean
+5
+# lone char
+6
+# prefix
+1
+# highlight spans whole phrase, offsets correct
+日月潭紅茶產於南投縣[魚池鄉]
+# highlight mixed
+[Go] [語言]和 SQLite 全文檢索：Résumé
+# snippet
+日月潭紅茶[產於]…
+…山茶[產於]嘉義縣
+# bm25 ranks shorter doc first
+2
+1
+# parent options pass through
+0
+1
