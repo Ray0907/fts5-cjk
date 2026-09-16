@@ -2,6 +2,8 @@
 
 An SQLite FTS5 tokenizer for Chinese, Japanese and Korean. One C file, no dictionary, no dependencies.
 
+[繁體中文](README.zh-TW.md) · [日本語](README.ja.md) · [한국어](README.ko.md)
+
 ## The problem
 
 FTS5 ships three tokenizers and none of them work for CJK text:
@@ -44,7 +46,9 @@ You need `sqlite3ext.h` from an SQLite built with FTS5. On macOS use Homebrew's 
 
 ## Results
 
-Same 47,257 articles from Taiwan's national law database, three tables that differ only in `tokenize=`. Numbers are matching articles.
+### Chinese
+
+Same 47,257 articles from Taiwan's national law database, three tables that differ only in `tokenize=`. Numbers are how many articles the query returns. The `cjk` column is identical to a full-table `LIKE '%勞工%'` scan, i.e. every article that actually contains the word; the other two columns show how many of those the built-in tokenizers find.
 
 | query | `unicode61` | `trigram` | `cjk` |
 |---|---|---|---|
@@ -58,6 +62,40 @@ Same 47,257 articles from Taiwan's national law database, three tables that diff
 | 勞工 退休 | 0 | 0 | 157 |
 
 `unicode61` only hits when punctuation happens to isolate the word. `trigram` is fine for four-character terms and blind to two-character ones. Building all three tables took 3.6 s.
+
+### Japanese
+
+4,011 paragraphs from 40 Japanese Wikipedia articles.
+
+| query | `unicode61` | `trigram` | `cjk` |
+|---|---|---|---|
+| 会社 | 1 | 0 | 243 |
+| 保険 | 0 | 0 | 217 |
+| 労働 | 0 | 0 | 161 |
+| 東京 | 16 | 0 | 560 |
+| 契約 | 0 | 0 | 40 |
+| 新幹線 | 367 | 379 | 379 |
+| 労働基準法 | 79 | 80 | 80 |
+| 東京 大学 | 0 | 0 | 262 |
+
+Japanese has no spaces, so `unicode61` sees whole clauses as one token and two-character words vanish. Three-character words and longer are where `trigram` catches up.
+
+### Korean
+
+2,095 paragraphs from 40 Korean Wikipedia articles.
+
+| query | `unicode61` | `trigram` | `cjk` |
+|---|---|---|---|
+| 회사 | 4 | 0 | 24 |
+| 보험 | 12 | 0 | 41 |
+| 서울 | 64 | 0 | 338 |
+| 학교 | 19 | 0 | 194 |
+| 결혼 | 13 | 0 | 32 |
+| 대통령 | 22 | 62 | 62 |
+| 인천공항 | 4 | 17 | 17 |
+| 서울 대학 | 1 | 0 | 108 |
+
+Korean is written with spaces, so `unicode61` does find the bare word. It misses every form with a particle attached (서울은, 서울의, 서울에서), which is most of them. Two-syllable words are again invisible to `trigram`.
 
 ## Things to know
 
