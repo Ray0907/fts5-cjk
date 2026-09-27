@@ -93,9 +93,11 @@ FTS5 入りの SQLite の `sqlite3ext.h` が必要です。macOS では Homebrew
 ## 知っておくこと
 
 - 空白なしの 1 語は 1 つのフレーズです。`MATCH '滋賀県'` は部分文字列「滋賀県」を意味します。2 語を AND したいときは空白で区切ります。
-- 1 文字だけのクエリは、その文字が単独で現れる文書にしかヒットしません。前方一致を使ってください：`MATCH '湖*'`。
+- デフォルトでは 1 文字のクエリは、その文字が単独で現れる文書にしかヒットしません。`MATCH '湖*'` を使うか、`tokenize='cjk unigram 1'` で 1 文字も索引に登録できます（法令 4.7 万条の実測でインデックスは約 70% 増）。
+- 全角 ASCII と半角カタカナ（濁点・半濁点を含む）、および 臺→台、裡→裏、羣→群、峯→峰、綫→線、衞→衛、爲→為、眞→真、敎→教、册→冊、祕→秘、啓→啟、淸→清、靑→青 を索引時・検索時に正規化します。その他の繁体字・簡体字変換はしません。
+- アップグレード後は既存のインデックスを再構築してください：`INSERT INTO t(t) VALUES('rebuild')`。
 - 漢字、ひらがな、カタカナ、ハングルを CJK として扱います。CJK の句読点は区切りです。
-- インデックスのサイズは `trigram` と同程度です。
+- `unigram 1` なしのインデックスサイズは `trigram` と同程度です。
 
 ## 対応する文字
 
@@ -111,7 +113,7 @@ FTS5 入りの SQLite の `sqlite3ext.h` が必要です。macOS では Homebrew
 
 | | 方式 | 依存 |
 |---|---|---|
-| `cjk`（本プロジェクト） | 文字 bigram、残りは unicode61 | なし、C 155 行 |
+| `cjk`（本プロジェクト） | 文字 bigram、残りは unicode61 | なし、C 279 行 |
 | [wangfenjin/simple](https://github.com/wangfenjin/simple) | 1 文字単位、任意で jieba と拼音 | C++、jieba 辞書 |
 | [streetwriters/sqlite-better-trigram](https://github.com/streetwriters/sqlite-better-trigram) | 短い語にフォールバックする trigram | TypeScript |
 | [cwt/fts5-icu-tokenizer](https://github.com/cwt/fts5-icu-tokenizer) | ICU の word break iterator | ICU データ |

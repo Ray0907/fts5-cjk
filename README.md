@@ -100,9 +100,11 @@ Korean is written with spaces, so `unicode61` does find the bare word. It misses
 ## Things to know
 
 - One bareword is one phrase. `MATCH '魚池鄉'` means the substring 魚池鄉. To AND two words, separate them with a space.
-- A single-character query only matches documents where that character stands alone. Use a prefix query: `MATCH '茶*'`.
+- By default, a single-character query only matches documents where that character stands alone. Use `MATCH '茶*'`, or create the table with `tokenize='cjk unigram 1'` to index single characters too (about 70% larger index on 47k law articles).
+- Full-width ASCII and half-width katakana (including voiced marks) are folded. The variants 臺→台, 裡→裏, 羣→群, 峯→峰, 綫→線, 衞→衛, 爲→為, 眞→真, 敎→教, 册→冊, 祕→秘, 啓→啟, 淸→清, 靑→青 are folded at index and query time; other traditional/simplified mappings are not.
+- Rebuild existing indexes after upgrading: `INSERT INTO t(t) VALUES('rebuild')`.
 - Han, hiragana, katakana and hangul count as CJK. CJK punctuation is a separator.
-- Index size is in the same range as `trigram`.
+- Without `unigram 1`, index size is in the same range as `trigram`.
 
 ## Languages
 
@@ -118,7 +120,7 @@ Korean is written with spaces, so `unicode61` does find the bare word. It misses
 
 | | approach | dependencies |
 |---|---|---|
-| `cjk` (this) | character bigrams, unicode61 for the rest | none, 155 lines of C |
+| `cjk` (this) | character bigrams, unicode61 for the rest | none, 279 lines of C |
 | [wangfenjin/simple](https://github.com/wangfenjin/simple) | per character, optional jieba, pinyin | C++, jieba dictionary |
 | [streetwriters/sqlite-better-trigram](https://github.com/streetwriters/sqlite-better-trigram) | trigram with a fallback for short words | TypeScript |
 | [cwt/fts5-icu-tokenizer](https://github.com/cwt/fts5-icu-tokenizer) | ICU word break iterator | ICU data |

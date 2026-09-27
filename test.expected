@@ -74,3 +74,36 @@ sqlite
 # parent options pass through
 0
 1
+# F1 unigram 茶
+1
+# F2 phrase 魚池鄉
+1
+# F2 nonadjacent 南投魚池
+0
+# F3 unigram highlight
+日月潭紅[茶]產於南投縣魚池鄉
+# F4 unigram prefix
+1
+# F5 default 茶
+0
+# F6 臺→台
+2
+3
+# F7 half-width kana
+[ｶﾀｶﾅ]半角
+# F8 dakuten and handakuten
+[ｶﾞｲﾄﾞ]
+[ﾊﾟﾝ]
+# F9 full-width ASCII
+[ＳＱＬｉｔｅ１２３]
+# F10 Ext H and F11 Compatibility Supplement
+1
+1
+# F13 unicode61 options after unigram
+0
+1
+# F14 著 must not fold to 着
+11
+0
+# F12 invalid unigram rejected
+Error near line 64: error in tokenizer constructor

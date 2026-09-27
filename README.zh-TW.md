@@ -100,9 +100,11 @@ make test   # 用 sqlite3 跑 test.sql，跟 test.expected 比對
 ## 要知道的事
 
 - 一個沒空白的查詢字串是一個 phrase。`MATCH '魚池鄉'` 的意思是子字串「魚池鄉」。要 AND 兩個詞，中間加空白。
-- 單一個字的查詢只會中那個字單獨出現的文件。用前綴查詢：`MATCH '茶*'`。
+- 預設單一個字的查詢只會中那個字單獨出現的文件。可用前綴查詢 `MATCH '茶*'`，或建表時設 `tokenize='cjk unigram 1'`，讓單字也能被索引（4.7 萬條法規實測索引大約增加 70%）。
+- 全形 ASCII、半形片假名（含濁音）會摺疊。臺→台、裡→裏、羣→群、峯→峰、綫→線、衞→衛、爲→為、眞→真、敎→教、册→冊、祕→秘、啓→啟、淸→清、靑→青會在索引與查詢時摺疊；不做其他繁簡轉換。
+- 升級後須重建舊索引：`INSERT INTO t(t) VALUES('rebuild')`。
 - 漢字、平假名、片假名、諺文算 CJK。中日韓標點是分隔符。
-- 索引大小跟 `trigram` 差不多。
+- 不開啟 `unigram 1` 時，索引大小跟 `trigram` 差不多。
 
 ## 支援的文字
 
@@ -118,7 +120,7 @@ make test   # 用 sqlite3 跑 test.sql，跟 test.expected 比對
 
 | | 做法 | 相依 |
 |---|---|---|
-| `cjk`（本專案） | 字元 bigram，其餘交給 unicode61 | 無，155 行 C |
+| `cjk`（本專案） | 字元 bigram，其餘交給 unicode61 | 無，279 行 C |
 | [wangfenjin/simple](https://github.com/wangfenjin/simple) | 逐字，可選 jieba、拼音 | C++、jieba 字典 |
 | [streetwriters/sqlite-better-trigram](https://github.com/streetwriters/sqlite-better-trigram) | trigram 加短詞 fallback | TypeScript |
 | [cwt/fts5-icu-tokenizer](https://github.com/cwt/fts5-icu-tokenizer) | ICU word break iterator | ICU 資料 |

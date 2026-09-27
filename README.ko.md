@@ -94,9 +94,11 @@ FTS5가 포함된 SQLite의 `sqlite3ext.h`가 필요합니다. macOS에서는 Ho
 ## 알아둘 것
 
 - 공백 없는 한 단어는 하나의 구입니다. `MATCH '특별시'`는 부분 문자열 "특별시"를 뜻합니다. 두 단어를 AND 하려면 공백으로 나누세요.
-- 한 글자 검색어는 그 글자가 홀로 있는 문서에만 걸립니다. 접두 검색을 쓰세요: `MATCH '강*'`.
+- 기본적으로 한 글자 검색어는 그 글자가 홀로 있는 문서에만 걸립니다. `MATCH '강*'`을 쓰거나 `tokenize='cjk unigram 1'`로 한 글자도 색인할 수 있습니다(법령 4.7만 조문 실측 시 인덱스 약 70% 증가).
+- 전각 ASCII와 반각 가타카나(탁점·반탁점 포함), 그리고 臺→台, 裡→裏, 羣→群, 峯→峰, 綫→線, 衞→衛, 爲→為, 眞→真, 敎→教, 册→冊, 祕→秘, 啓→啟, 淸→清, 靑→青을 색인과 검색 시 정규화합니다. 그 외의 번체·간체 변환은 하지 않습니다.
+- 업그레이드 후 기존 인덱스를 다시 빌드하세요: `INSERT INTO t(t) VALUES('rebuild')`.
 - 한글, 한자, 히라가나, 가타카나를 CJK로 봅니다. CJK 문장부호는 구분자입니다.
-- 인덱스 크기는 `trigram`과 비슷합니다.
+- `unigram 1`이 없으면 인덱스 크기는 `trigram`과 비슷합니다.
 
 ## 지원 문자
 
@@ -112,7 +114,7 @@ FTS5가 포함된 SQLite의 `sqlite3ext.h`가 필요합니다. macOS에서는 Ho
 
 | | 방식 | 의존성 |
 |---|---|---|
-| `cjk`(이 프로젝트) | 글자 bigram, 나머지는 unicode61 | 없음, C 155줄 |
+| `cjk`(이 프로젝트) | 글자 bigram, 나머지는 unicode61 | 없음, C 279줄 |
 | [wangfenjin/simple](https://github.com/wangfenjin/simple) | 글자 단위, 선택적으로 jieba·병음 | C++, jieba 사전 |
 | [streetwriters/sqlite-better-trigram](https://github.com/streetwriters/sqlite-better-trigram) | 짧은 단어 폴백이 있는 trigram | TypeScript |
 | [cwt/fts5-icu-tokenizer](https://github.com/cwt/fts5-icu-tokenizer) | ICU word break iterator | ICU 데이터 |
