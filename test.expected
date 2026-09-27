@@ -106,4 +106,4 @@ sqlite
 11
 0
 # F12 invalid unigram rejected
-Error near line 64: error in tokenizer constructor
+error in tokenizer constructor

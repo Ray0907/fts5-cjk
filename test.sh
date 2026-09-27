@@ -11,4 +11,6 @@ else
   rc=$?
   if [ "$rc" -ne 1 ]; then cat test.out; exit "$rc"; fi
 fi
+# sqlite3 versions differ in the error prefix ("Error" vs "Runtime error").
+sed 's/^.*rror near line [0-9]*: //' test.out > test.out.tmp && mv test.out.tmp test.out
 diff -u test.expected test.out && echo "ok"
