@@ -48,20 +48,20 @@ You need `sqlite3ext.h` from an SQLite built with FTS5. On macOS use Homebrew's 
 
 ### Chinese
 
-Same 47,257 articles from Taiwan's national law database, three tables that differ only in `tokenize=`. Numbers are how many articles the query returns. The `cjk` column is identical to a full-table `LIKE '%勞工%'` scan, i.e. every article that actually contains the word; the other two columns show how many of those the built-in tokenizers find.
+Same 47,281 articles from Taiwan's national law database, three tables that differ only in `tokenize=`. Numbers are how many articles the query returns. The `cjk` column is identical to a full-table `LIKE '%勞工%'` scan, i.e. every article that actually contains the word; the other two columns show how many of those the built-in tokenizers find.
 
 | query | `unicode61` | `trigram` | `cjk` |
 |---|---|---|---|
-| 勞工 | 10 | 0 | 958 |
-| 退休 | 75 | 0 | 1057 |
-| 公司 | 44 | 0 | 2050 |
-| 保險 | 41 | 0 | 1789 |
-| 臺灣 | 0 | 0 | 849 |
+| 勞工 | 11 | 0 | 711 |
+| 退休 | 75 | 0 | 844 |
+| 公司 | 44 | 0 | 1809 |
+| 保險 | 41 | 0 | 1579 |
+| 臺灣 | 0 | 0 | 501 |
 | 特別休假 | 0 | 7 | 7 |
 | 有期徒刑 | 8 | 1316 | 1316 |
-| 勞工 退休 | 0 | 0 | 157 |
+| 勞工 退休 | 0 | 0 | 119 |
 
-`unicode61` only hits when punctuation happens to isolate the word. `trigram` is fine for four-character terms and blind to two-character ones. Building all three tables took 3.6 s.
+`unicode61` only hits when punctuation happens to isolate the word. `trigram` is fine for four-character terms and blind to two-character ones. The 臺灣 row also counts 台灣, which `cjk` folds to the same form. Reproduce with `bench/law.sh`: it downloads the data, rebuilds the tables and fails if any `cjk` count differs from the `LIKE` scan.
 
 ### Japanese
 
