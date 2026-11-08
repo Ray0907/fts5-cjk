@@ -1,10 +1,9 @@
 UNAME := $(shell uname)
-SQLITE_INC ?= $(if $(filter Darwin,$(UNAME)),/opt/homebrew/opt/sqlite/include,/usr/include)
-CFLAGS ?= -O2 -Wall -fPIC -I$(SQLITE_INC)
+CFLAGS ?= -O2 -Wall -fPIC
 EXT := $(if $(filter Darwin,$(UNAME)),dylib,so)
 
 cjk.$(EXT): cjk.c
-	$(CC) $(CFLAGS) -shared -o $@ $<
+	$(CC) $(CFLAGS) -Ivendor/sqlite -shared -o $@ $<
 
 test: cjk.$(EXT)
 	./test.sh
