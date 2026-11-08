@@ -10,7 +10,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: deps (linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y sqlite3
+        run: sudo apt-get update && sudo apt-get install -y sqlite3 libsqlite3-dev
       - name: deps (macos)
         if: runner.os == 'macOS'
         run: brew install sqlite
@@ -18,3 +18,5 @@ jobs:
         run: |
           if [ "$RUNNER_OS" = Linux ]; then export SQLITE3=sqlite3; fi
           make test
+      - name: sanitizers
+        run: make asan-test
