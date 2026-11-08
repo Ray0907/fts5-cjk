@@ -42,7 +42,9 @@ make        # macOS는 cjk.dylib, 그 외는 cjk.so
 make test   # test.sql을 sqlite3로 실행하고 test.expected와 diff
 ```
 
-FTS5가 포함된 SQLite의 `sqlite3ext.h`가 필요합니다. macOS에서는 Homebrew의 것을 쓰세요(`brew install sqlite`). 시스템 `sqlite3`는 확장을 로드하지 못합니다. Debian / Ubuntu는 `libsqlite3-dev`. 헤더가 다른 곳에 있으면 `SQLITE_INC`로 지정합니다.
+빌드에는 C 컴파일러만 있으면 됩니다. SQLite 헤더는 `vendor/sqlite/`에 있습니다. 로드와 테스트에는 FTS5와 확장 로드를 지원하는 `sqlite3`가 필요합니다. macOS에서는 Homebrew의 것을 쓰세요(`brew install sqlite`). 시스템 `sqlite3`는 확장을 로드하지 못합니다.
+
+`make asan-test`는 AddressSanitizer와 UBSan으로 확장을 빌드하고 잘못된 UTF-8을 포함한 무작위 바이트를 입력합니다. `libsqlite3`를 링크합니다(macOS는 Homebrew, Debian / Ubuntu는 `libsqlite3-dev`).
 
 ## 결과
 

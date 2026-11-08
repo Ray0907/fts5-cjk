@@ -42,7 +42,9 @@ make        # macOS では cjk.dylib、それ以外は cjk.so
 make test   # test.sql を sqlite3 で実行し、test.expected と diff
 ```
 
-FTS5 入りの SQLite の `sqlite3ext.h` が必要です。macOS では Homebrew のもの（`brew install sqlite`）を使ってください。OS 付属の `sqlite3` は拡張を読み込めません。Debian / Ubuntu では `libsqlite3-dev`。ヘッダが別の場所にあるなら `SQLITE_INC` で指定します。
+ビルドに必要なのは C コンパイラだけです。SQLite のヘッダは `vendor/sqlite/` にあります。読み込みとテストには、FTS5 と拡張の読み込みに対応した `sqlite3` が必要です。macOS では Homebrew のもの（`brew install sqlite`）を使ってください。OS 付属の `sqlite3` は拡張を読み込めません。
+
+`make asan-test` は AddressSanitizer と UBSan で拡張をビルドし、不正な UTF-8 を含むランダムなバイト列を与えます。`libsqlite3` をリンクします（macOS は Homebrew、Debian / Ubuntu は `libsqlite3-dev`）。
 
 ## 結果
 

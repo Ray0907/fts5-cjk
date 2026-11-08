@@ -42,7 +42,9 @@ make        # macOS 產生 cjk.dylib，其他平台 cjk.so
 make test   # 用 sqlite3 跑 test.sql，跟 test.expected 比對
 ```
 
-需要有 FTS5 的 SQLite 標頭檔 `sqlite3ext.h`。macOS 用 Homebrew 的（`brew install sqlite`），系統內建的 `sqlite3` 不能載入 extension。Debian、Ubuntu 裝 `libsqlite3-dev`。標頭檔在別處就設 `SQLITE_INC`。
+編譯只需要 C compiler，SQLite 標頭檔已放在 `vendor/sqlite/`。載入和測試需要支援 FTS5 與 extension 載入的 `sqlite3`。macOS 用 Homebrew 的（`brew install sqlite`），系統內建的 `sqlite3` 不能載入 extension。
+
+`make asan-test` 用 AddressSanitizer 和 UBSan 編譯 extension，並餵入隨機位元組（含非法 UTF-8）。它會連結 `libsqlite3`（macOS 用 Homebrew 的，Debian、Ubuntu 裝 `libsqlite3-dev`）。
 
 ## 結果
 
