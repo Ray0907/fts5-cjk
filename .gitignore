@@ -2,3 +2,7 @@ cjk.dylib
 cjk.so
 test.out
 bench/corpus/
+cjk-asan.*
+asan-test
+asan-test.dSYM
+cjk-asan.dylib.dSYM
