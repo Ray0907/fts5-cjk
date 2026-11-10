@@ -10,8 +10,9 @@
 **   CREATE VIRTUAL TABLE t USING fts5(body, tokenize='cjk');
 **   CREATE VIRTUAL TABLE t USING fts5(body, tokenize='cjk unigram 1');
 **   CREATE VIRTUAL TABLE t USING fts5(body, tokenize='cjk unigram 1 remove_diacritics 2');
-** unigram 1 additionally indexes single characters, without changing phrase
-** adjacency; unigram 0 (the default) keeps the original bigram behavior.
+** unigram 1 additionally indexes every single character, without changing phrase
+** adjacency. unigram 0 (the default) indexes bigrams plus the first and last
+** character of each CJK run, so 第38條 and 茶* work without the larger index.
 **
 ** A query bareword that tokenizes into several bigrams is matched by FTS5 as a
 ** phrase, so  MATCH '魚池鄉'  requires 魚池 and 池鄉 to be adjacent, i.e. it is a
@@ -34,7 +35,21 @@ typedef struct Ctx {
   void *pCtx;
   xTokenFn xToken;
   int base;                /* byte offset of the segment passed to the parent */
+  int seen;                /* a token has been emitted in this call */
+  char tail[4];            /* query side: last character of the previous CJK run, */
+  int nTail, tailStart, tailEnd;  /* emitted only if another token follows */
 } Ctx;
+
+static int emit(Ctx *ctx, int tflags, const char *z, int n, int iStart, int iEnd){
+  if( ctx->nTail ){
+    int nTail = ctx->nTail;
+    ctx->nTail = 0;
+    int rc = ctx->xToken(ctx->pCtx, 0, ctx->tail, nTail, ctx->tailStart, ctx->tailEnd);
+    if( rc != SQLITE_OK ) return rc;
+  }
+  ctx->seen = 1;
+  return ctx->xToken(ctx->pCtx, tflags, z, n, iStart, iEnd);
+}
 
 /* Han, Hiragana, Katakana, Hangul, and the ideographic marks 々〆〇 that sit
 ** inside words. The rest of CJK punctuation (U+3000-303F) is a separator. */
@@ -69,7 +84,7 @@ static int parentCb(void *p, int tflags, const char *pTok, int nTok, int iStart,
         && (unsigned char)pTok[i+2] >= 0x80 ) break;
   }
   if( i + 2 >= nTok )
-    return ctx->xToken(ctx->pCtx, tflags, pTok, nTok, ctx->base + iStart, ctx->base + iEnd);
+    return emit(ctx, tflags, pTok, nTok, ctx->base + iStart, ctx->base + iEnd);
   char *z = sqlite3_malloc(nTok);
   if( !z ) return SQLITE_NOMEM;
   int n = 0;
@@ -84,7 +99,7 @@ static int parentCb(void *p, int tflags, const char *pTok, int nTok, int iStart,
     }
     i += len;
   }
-  int rc = ctx->xToken(ctx->pCtx, tflags, z, n, ctx->base + iStart, ctx->base + iEnd);
+  int rc = emit(ctx, tflags, z, n, ctx->base + iStart, ctx->base + iEnd);
   sqlite3_free(z);
   return rc;
 }
@@ -182,7 +197,11 @@ static int utf8Encode(unsigned int cp, char *z){
   return 4;
 }
 
-/* Emit folded bigrams, keeping offsets in the original CJK run. */
+/* Emit folded bigrams, keeping offsets in the original CJK run. Without unigram 1,
+** the first and last character of a run also get positions of their own, so a
+** character next to Latin text or digits (第38條, 5月) is a token, and 茶* finds a
+** run-final 茶. A query only needs those edges where another token adjoins the run;
+** a pure CJK query stays a chain of bigrams. */
 static int emitBigrams(Ctx *ctx, const char *text, int iStart, int iEnd, int unigram, int query){
   Rune *a = sqlite3_malloc64((sqlite3_uint64)(iEnd - iStart) * sizeof(*a));
   if( !a ) return SQLITE_NOMEM;
@@ -206,17 +225,20 @@ static int emitBigrams(Ctx *ctx, const char *text, int iStart, int iEnd, int uni
     char z[8];
     int size = utf8Encode(a[j].cp, z);
     if( j + 1 < n ){
-      if( unigram && !query ){
-        rc = ctx->xToken(ctx->pCtx, 0, z, size, a[j].start, a[j].end);
+      if( unigram ? !query : j == 0 && (!query || ctx->seen) ){
+        rc = emit(ctx, 0, z, size, a[j].start, a[j].end);
         if( rc != SQLITE_OK ) break;
-        size += utf8Encode(a[j+1].cp, z + size);
-      }else{
-        size += utf8Encode(a[j+1].cp, z + size);
       }
-      rc = ctx->xToken(ctx->pCtx, unigram && !query ? FTS5_TOKEN_COLOCATED : 0, z, size, a[j].start, a[j+1].end);
-    }else if( n == 1 || unigram ){
+      size += utf8Encode(a[j+1].cp, z + size);
+      rc = emit(ctx, unigram && !query ? FTS5_TOKEN_COLOCATED : 0, z, size, a[j].start, a[j+1].end);
+    }else if( query && !unigram && n > 1 ){
+      memcpy(ctx->tail, z, size);
+      ctx->nTail = size;
+      ctx->tailStart = a[j].start;
+      ctx->tailEnd = a[j].end;
+    }else{
       /* A trailing query unigram spans the final character for highlight(). */
-      rc = ctx->xToken(ctx->pCtx, 0, z, size, a[j].start, a[j].end);
+      rc = emit(ctx, 0, z, size, a[j].start, a[j].end);
     }
   }
   sqlite3_free(a);
@@ -225,7 +247,7 @@ static int emitBigrams(Ctx *ctx, const char *text, int iStart, int iEnd, int uni
 
 static int cjkTokenize(Fts5Tokenizer *pTok, void *pCtx, int flags, const char *pText, int nText, xTokenFn xToken){
   CjkTokenizer *p = (CjkTokenizer*)pTok;
-  Ctx ctx = { pCtx, xToken, 0 };
+  Ctx ctx = { .pCtx = pCtx, .xToken = xToken };
   int i = 0, segStart = 0, rc = SQLITE_OK;
   int inCJK = 0;
   unsigned int c;

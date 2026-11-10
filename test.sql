@@ -66,6 +66,19 @@ SELECT rowid FROM j WHERE j MATCH '人々';
 SELECT rowid FROM j WHERE j MATCH '佐々木';
 SELECT rowid FROM j WHERE j MATCH '〆切';
 SELECT rowid FROM j WHERE j MATCH '二〇二四';
+SELECT '# B1 single characters at CJK run boundaries';
+CREATE VIRTUAL TABLE b USING fts5(body, tokenize='cjk');
+INSERT INTO b(rowid, body) VALUES (1, '依第38條規定辦理'), (2, '我們在5月舉行'), (3, '使用iPhone手機很方便'),
+  (4, '血型A型的人'), (5, '阿里山高山茶'), (6, '5AB'), (7, '南投縣，魚池鄉');
+SELECT highlight(b, 0, '[', ']') FROM b WHERE b MATCH '第38條';
+SELECT highlight(b, 0, '[', ']') FROM b WHERE b MATCH '5月';
+SELECT highlight(b, 0, '[', ']') FROM b WHERE b MATCH '用iphone';
+SELECT highlight(b, 0, '[', ']') FROM b WHERE b MATCH 'a型';
+SELECT highlight(b, 0, '[', ']') FROM b WHERE b MATCH '茶*';
+SELECT '# B2 5b must not match 5AB'; SELECT count(*) FROM b WHERE b MATCH '5b';
+SELECT '# B3 two runs in one query string'; SELECT highlight(b, 0, '[', ']') FROM b WHERE b MATCH '南投縣，魚池鄉';
+SELECT '# B4 unigram 1 mixed query'; INSERT INTO u(rowid, body) VALUES (12, '新款iPhone手機');
+SELECT highlight(u, 0, '[', ']') FROM u WHERE u MATCH 'iphone手機';
 SELECT '# F12 invalid unigram rejected';
 .bail off
 CREATE VIRTUAL TABLE invalid_unigram USING fts5(body, tokenize='cjk unigram 2');

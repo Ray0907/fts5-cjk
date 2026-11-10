@@ -3,12 +3,15 @@ go
 resume
 sqlite
 のカ
+ェ
 カフ
 フェ
 京都
+全
 全文
 区の
 南投
+和
 嘉義
 山茶
 山高
@@ -16,8 +19,10 @@ sqlite
 文檢
 於南
 於嘉
+日
 日月
 月潭
+東
 東京
 檢索
 池鄉
@@ -25,22 +30,31 @@ sqlite
 潭紅
 產於
 紅茶
+索
+縣
 縣魚
 義縣
 茶
 茶產
 言和
+語
 語言
 谷区
 都渋
+鄉
 里山
+阿
 阿里
 高山
 魚池
+강
 강남
+구
 남구
 별시
+서
 서울
+시
 울특
 특별
 # substring 魚池
@@ -66,8 +80,8 @@ sqlite
 # highlight mixed
 [Go] [語言]和 SQLite 全文檢索：Résumé
 # snippet
-日月潭紅茶[產於]…
-…山茶[產於]嘉義縣
+…紅茶[產於]南投縣…
+…山茶[產於]嘉義縣…
 # bm25 ranks shorter doc first
 2
 1
@@ -110,5 +124,17 @@ sqlite
 2
 3
 4
+# B1 single characters at CJK run boundaries
+依[第38條]規定辦理
+我們在[5月]舉行
+使[用iPhone]手機很方便
+血型[A型]的人
+阿里山高山[茶]
+# B2 5b must not match 5AB
+0
+# B3 two runs in one query string
+[南投縣，魚池鄉]
+# B4 unigram 1 mixed query
+新款[iPhone手機]
 # F12 invalid unigram rejected
 error in tokenizer constructor
