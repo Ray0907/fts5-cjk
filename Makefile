@@ -17,7 +17,11 @@ asan-test: cjk-asan.$(EXT) test/asan.c
 	$(CC) -Wall $(SAN) -Ivendor/sqlite -o $@ test/asan.c $(SQLITE_LIB)
 	./$@ ./cjk-asan.$(EXT)
 
-clean:
-	rm -rf cjk.so cjk.dylib cjk-asan.so cjk-asan.dylib cjk-asan.dylib.dSYM asan-test asan-test.dSYM
+static-test: cjk.c test/static.c
+	$(CC) -Wall -DSQLITE_CORE -Ivendor/sqlite -o $@ test/static.c cjk.c $(SQLITE_LIB)
+	./$@
 
-.PHONY: test asan-test clean
+clean:
+	rm -rf cjk.so cjk.dylib cjk-asan.so cjk-asan.dylib cjk-asan.dylib.dSYM asan-test asan-test.dSYM static-test
+
+.PHONY: test asan-test static-test clean

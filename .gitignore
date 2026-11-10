@@ -6,3 +6,4 @@ cjk-asan.*
 asan-test
 asan-test.dSYM
 cjk-asan.dylib.dSYM
+static-test

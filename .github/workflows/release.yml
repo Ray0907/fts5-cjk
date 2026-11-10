@@ -1,0 +1,60 @@
+name: release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: read
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - { os: ubuntu-latest, name: linux-x86_64 }
+          - { os: ubuntu-24.04-arm, name: linux-aarch64 }
+          - { os: macos-latest, name: macos-universal }
+          - { os: windows-latest, name: windows-x86_64 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: build + test (linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update && sudo apt-get install -y sqlite3
+          make test SQLITE3=sqlite3
+          tar czf cjk-${{ matrix.name }}.tar.gz cjk.so LICENSE
+      - name: build + test (macos)
+        if: runner.os == 'macOS'
+        run: |
+          brew install sqlite
+          make test CFLAGS='-O2 -Wall -fPIC -arch arm64 -arch x86_64'
+          lipo -archs cjk.dylib
+          tar czf cjk-${{ matrix.name }}.tar.gz cjk.dylib LICENSE
+      - uses: actions/setup-python@v5
+        if: runner.os == 'Windows'
+        with:
+          python-version: '3.13'
+      - name: build + test (windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          gcc -O2 -Wall -shared -static-libgcc -Ivendor/sqlite -o cjk.dll cjk.c
+          python test/smoke.py ./cjk.dll
+          7z a cjk-${{ matrix.name }}.zip cjk.dll LICENSE
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cjk-${{ matrix.name }}
+          path: cjk-${{ matrix.name }}.*
+  release:
+    needs: build
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes
