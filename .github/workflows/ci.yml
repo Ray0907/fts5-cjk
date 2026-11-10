@@ -20,3 +20,20 @@ jobs:
           make test
       - name: sanitizers
         run: make asan-test
+      - name: static link
+        run: make static-test
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: build
+        shell: bash
+        run: |
+          gcc -O2 -Wall -shared -static-libgcc -Ivendor/sqlite -o cjk.dll cjk.c
+          objdump -p cjk.dll | grep 'DLL Name'
+          ! objdump -p cjk.dll | grep -iE 'DLL Name: (libgcc|libwinpthread)'
+      - name: smoke test
+        run: python test/smoke.py ./cjk.dll
