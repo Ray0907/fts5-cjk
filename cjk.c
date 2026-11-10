@@ -17,6 +17,9 @@
 ** A query bareword that tokenizes into several bigrams is matched by FTS5 as a
 ** phrase, so  MATCH '魚池鄉'  requires 魚池 and 池鄉 to be adjacent, i.e. it is a
 ** substring match. Space-separated words are ANDed as usual.
+**
+** The extension also registers cjk_query(text [, table]), which turns raw
+** search-box text into a MATCH string; see cjkQueryFunc.
 */
 #include "sqlite3ext.h"
 SQLITE_EXTENSION_INIT1
@@ -289,6 +292,113 @@ static int cjkTokenize(Fts5Tokenizer *pTok, void *pCtx, int flags, const char *p
   return rc;
 }
 
+/* NUL counts as a space so the result never hides text behind a terminator. */
+static int spaceLen(const char *z, int n){
+  if( *z == 0 || *z == ' ' || (*z >= '\t' && *z <= '\r') ) return 1;
+  return n >= 3 && !memcmp(z, "\xE3\x80\x80", 3) ? 3 : 0;
+}
+
+/* A lone CJK character becomes a prefix query, which also matches it inside runs. */
+static void appendWord(sqlite3_str *s, const char *z, int n){
+  unsigned int c;
+  int len = utf8Decode((const unsigned char*)z, n, &c);
+  sqlite3_str_appendchar(s, 1, '"');
+  for(int i = 0; i < n; i++){
+    if( z[i] == '"' ) sqlite3_str_appendchar(s, 1, '"');
+    sqlite3_str_appendchar(s, 1, z[i]);
+  }
+  sqlite3_str_appendall(s, len == n && isCJK(c) ? "\"*" : "\"");
+}
+
+/* Appends the word whose nc characters start at z + off[k], cut before
+** characters i and j (i <= j <= nc; a cut at nc is no cut). */
+static void appendPieces(sqlite3_str *s, const char *z, const int *off, int nc, int i, int j){
+  int cut[] = { 0, i, j, nc };
+  for(int k = 0; k < 3; k++){
+    if( cut[k] == cut[k+1] ) continue;
+    if( k ) sqlite3_str_appendchar(s, 1, ' ');
+    appendWord(s, z + off[cut[k]], off[cut[k+1]] - off[cut[k]]);
+  }
+}
+
+static sqlite3_int64 hits(sqlite3_stmt *pStmt, const char *z, const int *off, int nc, int i, int j, int *pRc){
+  sqlite3_str *s = sqlite3_str_new(0);
+  appendPieces(s, z, off, nc, i, j);
+  char *q = sqlite3_str_finish(s);
+  if( !q ){ *pRc = SQLITE_NOMEM; return 0; }
+  sqlite3_bind_text(pStmt, 1, q, -1, sqlite3_free);
+  sqlite3_int64 n = sqlite3_step(pStmt) == SQLITE_ROW ? sqlite3_column_int64(pStmt, 0) : 0;
+  *pRc = sqlite3_reset(pStmt);
+  return n;
+}
+
+/* cjk_query(text [, table]): turns search-box text into a MATCH string that
+** cannot be a syntax error. With a table, a CJK word of up to 32 characters
+** that has no hits as one phrase is split where the split has the most hits
+** (two pieces, then three for up to 12 characters), so 南投魚池 becomes
+** "南投" "魚池" when only the separate words occur. */
+static void cjkQueryFunc(sqlite3_context *pCtx, int argc, sqlite3_value **argv){
+  const char *z = (const char*)sqlite3_value_text(argv[0]);
+  int n = sqlite3_value_bytes(argv[0]), rc = SQLITE_OK;
+  if( !z ) return;
+  sqlite3 *db = sqlite3_context_db_handle(pCtx);
+  sqlite3_stmt *pStmt = 0;
+  if( argc == 2 ){
+    const char *zTab = (const char*)sqlite3_value_text(argv[1]);
+    char *zSql = sqlite3_mprintf("SELECT count(*) FROM \"%w\" WHERE \"%w\" MATCH ?1", zTab, zTab);
+    rc = zSql ? sqlite3_prepare_v2(db, zSql, -1, &pStmt, 0) : SQLITE_NOMEM;
+    sqlite3_free(zSql);
+  }
+  int *off = sqlite3_malloc64(((sqlite3_uint64)n + 1) * sizeof(*off));
+  if( !off && rc == SQLITE_OK ) rc = SQLITE_NOMEM;
+  sqlite3_str *out = sqlite3_str_new(db);
+  int budget = 256;
+  for(int i = 0; i < n && rc == SQLITE_OK; ){
+    if( spaceLen(z + i, n - i) ){ i += spaceLen(z + i, n - i); continue; }
+    int nc = 0, cjk = 1;
+    while( i < n && !spaceLen(z + i, n - i) ){
+      unsigned int c;
+      off[nc++] = i;
+      i += utf8Decode((const unsigned char*)z + i, n - i, &c);
+      cjk &= isCJK(c);
+    }
+    off[nc] = i;
+    int bi = nc, bj = nc;
+    /* Every probe is a MATCH query, so a pasted wall of text must not fan out:
+    ** a word is searched only if its worst case fits the call's probe budget. */
+    int cost = 1 + (nc - 1) + (nc <= 12 ? (nc - 1)*(nc - 2)/2 : 0);
+    int search = pStmt && cjk && nc > 1 && nc <= 32 && cost <= budget;
+    if( search ) budget -= cost;
+    if( search && hits(pStmt, z, off, nc, nc, nc, &rc) == 0 ){
+      sqlite3_int64 best = 0, h;
+      for(int a = 1; a < nc && rc == SQLITE_OK; a++){
+        if( (h = hits(pStmt, z, off, nc, a, nc, &rc)) > best ){ best = h; bi = a; }
+      }
+      for(int a = 1; !best && nc <= 12 && a < nc; a++){
+        for(int b = a + 1; b < nc && rc == SQLITE_OK; b++){
+          if( (h = hits(pStmt, z, off, nc, a, b, &rc)) > best ){ best = h; bi = a; bj = b; }
+        }
+      }
+    }
+    if( sqlite3_str_length(out) ) sqlite3_str_appendchar(out, 1, ' ');
+    appendPieces(out, z, off, nc, bi, bj);
+  }
+  /* MATCH '' is a syntax error; the empty phrase matches nothing. */
+  if( !sqlite3_str_length(out) ) sqlite3_str_appendall(out, "\"\"");
+  if( rc != SQLITE_OK ){
+    char *zErr = sqlite3_mprintf("cjk_query: %s", rc == SQLITE_NOMEM ? sqlite3_errstr(rc) : sqlite3_errmsg(db));
+    sqlite3_result_error(pCtx, zErr, -1);
+    sqlite3_free(zErr);
+  }else if( sqlite3_str_errcode(out) ){
+    sqlite3_result_error_nomem(pCtx);
+  }else{
+    sqlite3_result_text(pCtx, sqlite3_str_value(out), sqlite3_str_length(out), SQLITE_TRANSIENT);
+  }
+  sqlite3_free(sqlite3_str_finish(out));
+  sqlite3_finalize(pStmt);
+  sqlite3_free(off);
+}
+
 static fts5_api *fts5ApiFromDb(sqlite3 *db){
   fts5_api *pApi = 0;
   sqlite3_stmt *pStmt = 0;
@@ -311,5 +421,12 @@ int sqlite3_cjk_init(sqlite3 *db, char **pzErr, const sqlite3_api_routines *pApi
     return SQLITE_ERROR;
   }
   static fts5_tokenizer tok = { cjkCreate, cjkDelete, cjkTokenize };
-  return pApi->xCreateTokenizer(pApi, "cjk", (void*)pApi, &tok, 0);
+  int rc = pApi->xCreateTokenizer(pApi, "cjk", (void*)pApi, &tok, 0);
+  if( rc == SQLITE_OK ) rc = sqlite3_create_function(db, "cjk_query", 1,
+      SQLITE_UTF8 | SQLITE_DETERMINISTIC | SQLITE_INNOCUOUS, 0, cjkQueryFunc, 0, 0);
+  /* The two-argument form reads a table named by its caller, so keep it out of
+  ** schema-defined triggers and views. */
+  if( rc == SQLITE_OK ) rc = sqlite3_create_function(db, "cjk_query", 2,
+      SQLITE_UTF8 | SQLITE_DIRECTONLY, 0, cjkQueryFunc, 0, 0);
+  return rc;
 }

@@ -79,7 +79,7 @@ int main(int argc, char **argv){
   }
   for(t = 0; t < sizeof tok / sizeof *tok; t++){
     char sql[200];
-    sqlite3_stmt *ins, *sel, *raw;
+    sqlite3_stmt *ins, *sel, *raw, *cq[2];
     snprintf(sql, sizeof sql, "CREATE VIRTUAL TABLE t%zu USING fts5(body, tokenize='%s')", t, tok[t]);
     check(db, sqlite3_exec(db, sql, 0, 0, 0), "create");
     snprintf(sql, sizeof sql, "INSERT INTO t%zu(body) VALUES(?1)", t);
@@ -87,6 +87,10 @@ int main(int argc, char **argv){
     snprintf(sql, sizeof sql, "SELECT rowid FROM t%zu WHERE t%zu MATCH ?1", t, t);
     check(db, sqlite3_prepare_v2(db, sql, -1, &sel, 0), "prepare sel");
     check(db, sqlite3_prepare_v2(db, sql, -1, &raw, 0), "prepare raw");
+    snprintf(sql, sizeof sql, "SELECT rowid FROM t%zu WHERE t%zu MATCH cjk_query(?1)", t, t);
+    check(db, sqlite3_prepare_v2(db, sql, -1, &cq[0], 0), "prepare cjk_query");
+    snprintf(sql, sizeof sql, "SELECT rowid FROM t%zu WHERE t%zu MATCH cjk_query(?1, 't%zu')", t, t, t);
+    check(db, sqlite3_prepare_v2(db, sql, -1, &cq[1], 0), "prepare cjk_query table");
     for(i = 0; i < iters; i++){
       size_t n = gen(buf, sizeof buf), m;
       sqlite3_bind_text(ins, 1, (const char*)buf, (int)n, SQLITE_TRANSIENT);
@@ -100,10 +104,19 @@ int main(int argc, char **argv){
       sqlite3_bind_text(raw, 1, (const char*)buf, (int)n, SQLITE_TRANSIENT);
       while( sqlite3_step(raw) == SQLITE_ROW ) matches++;
       sqlite3_reset(raw);
+      for(m = 0; m < 2; m++){
+        int rc;
+        sqlite3_bind_text(cq[m], 1, (const char*)buf, (int)n, SQLITE_TRANSIENT);
+        while( (rc = sqlite3_step(cq[m])) == SQLITE_ROW ) matches++;
+        check(db, rc, "cjk_query output must be a valid MATCH");
+        sqlite3_reset(cq[m]);
+      }
     }
     sqlite3_finalize(ins);
     sqlite3_finalize(sel);
     sqlite3_finalize(raw);
+    sqlite3_finalize(cq[0]);
+    sqlite3_finalize(cq[1]);
     snprintf(sql, sizeof sql, "INSERT INTO t%zu(t%zu) VALUES('integrity-check')", t, t);
     check(db, sqlite3_exec(db, sql, 0, 0, 0), "integrity-check");
   }

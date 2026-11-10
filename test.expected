@@ -140,5 +140,24 @@ sqlite
 1|[がっこう]
 2|[한글]
 3|[ぱん]
+# Q1 cjk_query quotes every word
+"C++"|"勞工-退休"|""""|""|"茶"*|"南投" "魚池"
+0
+0
+0
+0
+1
+2
+6
+# Q2 cjk_query with a table splits words that have no hits
+"南投" "魚池"|"日月潭" "南投" "魚池"|"sqlite" "火星文字" "茶"*
+1
+# Q4 splitting is bounded: words over 32 characters, and past 256 probes per call
+1|1
+1
+"日月潭紅茶產" "南投縣魚池鄉"
+1
+# Q3 unknown table is an error
+cjk_query: no such table: no_such_table
 # F12 invalid unigram rejected
 error in tokenizer constructor

@@ -86,7 +86,28 @@ INSERT INTO n(rowid, body) VALUES (1, char(0x304B,0x3099,0x3063,0x3053,0x3046)),
 SELECT rowid, highlight(n, 0, '[', ']') FROM n WHERE n MATCH 'がっこう';
 SELECT rowid, highlight(n, 0, '[', ']') FROM n WHERE n MATCH '한글';
 SELECT rowid, highlight(n, 0, '[', ']') FROM n WHERE n MATCH 'ぱん';
-SELECT '# F12 invalid unigram rejected';
+SELECT '# Q1 cjk_query quotes every word';
+SELECT cjk_query('C++'), cjk_query('勞工-退休'), cjk_query('"'), cjk_query(''), cjk_query(' 茶 '), cjk_query('南投　魚池');
+SELECT count(*) FROM t WHERE t MATCH cjk_query('C++');
+SELECT count(*) FROM t WHERE t MATCH cjk_query('勞工-退休');
+SELECT count(*) FROM t WHERE t MATCH cjk_query('"');
+SELECT count(*) FROM t WHERE t MATCH cjk_query('');
+SELECT rowid FROM t WHERE t MATCH cjk_query('茶') ORDER BY rowid;
+SELECT '# Q2 cjk_query with a table splits words that have no hits';
+SELECT cjk_query('南投魚池', 't'), cjk_query('日月潭南投魚池', 't'), cjk_query('sqlite 火星文字 茶', 't');
+SELECT rowid FROM t WHERE t MATCH cjk_query('南投魚池', 't');
+SELECT '# Q4 splitting is bounded: words over 32 characters, and past 256 probes per call';
+CREATE VIRTUAL TABLE w USING fts5(body, tokenize='cjk');
+INSERT INTO w(body) SELECT replace(hex(zeroblob(15)), '0', '茶') || '茶 南投';
+SELECT cjk_query(x || '南投', 'w') = '"' || x || '" "南投"', cjk_query(x || '茶南投', 'w') = '"' || x || '茶南投"'
+  FROM (SELECT replace(hex(zeroblob(15)), '0', '茶') AS x);
+SELECT cjk_query(x, 't') = '"' || x || '"' FROM (SELECT replace(hex(zeroblob(20)), '0', '火') AS x);
+SELECT cjk_query('日月潭紅茶產南投縣魚池鄉', 't');
+SELECT cjk_query(x || ' ' || x || ' ' || x || ' 日月潭紅茶產南投縣魚池鄉', 't') LIKE '%" "日月潭紅茶產南投縣魚池鄉"'
+  FROM (SELECT replace(hex(zeroblob(6)), '0', '火') AS x);
+SELECT '# Q3 unknown table is an error';
 .bail off
+SELECT cjk_query('南投魚池', 'no_such_table');
+SELECT '# F12 invalid unigram rejected';
 CREATE VIRTUAL TABLE invalid_unigram USING fts5(body, tokenize='cjk unigram 2');
 .bail on
