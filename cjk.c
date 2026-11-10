@@ -175,14 +175,28 @@ static unsigned int fold(unsigned int cp){
   return v ? v->to : cp;
 }
 
-static unsigned int voiced(unsigned int cp, unsigned int mark){
-  if( mark == 0xFF9F ) return cp >= 0x30CF && cp <= 0x30DB && (cp - 0x30CF)%3 == 0 ? cp + 2 : 0;
-  if( cp == 0x30A6 ) return 0x30F4;  /* ウ → ヴ */
-  if( (cp >= 0x30AB && cp <= 0x30C1 && (cp - 0x30AB)%2 == 0)
-      || cp == 0x30C4 || cp == 0x30C6 || cp == 0x30C8 ) return cp + 1;
-  if( cp >= 0x30CF && cp <= 0x30DB && (cp - 0x30CF)%3 == 0 ) return cp + 1;
-  if( cp == 0x30EF ) return 0x30F7;
-  if( cp == 0x30F2 ) return 0x30FA;
+/* The precomposed form of prev followed by c, or 0. Covers voiced-sound marks
+** (half-width or combining) after kana, and Hangul jamo L+V then LV+T, so NFD
+** text indexes like NFC. */
+static unsigned int compose(unsigned int prev, unsigned int c){
+  if( c >= 0x1161 && c <= 0x1175 && prev >= 0x1100 && prev <= 0x1112 )
+    return 0xAC00 + ((prev - 0x1100)*21 + c - 0x1161)*28;
+  if( c >= 0x11A8 && c <= 0x11C2 && prev >= 0xAC00 && prev <= 0xD7A3 && (prev - 0xAC00)%28 == 0 )
+    return prev + c - 0x11A7;
+  int handakuten = c == 0xFF9F || c == 0x309A;
+  if( !handakuten && c != 0xFF9E && c != 0x3099 ) return 0;
+  if( prev >= 0x3041 && prev <= 0x3096 ){
+    /* Hiragana mirrors katakana 0x60 lower, but only up to ゔ. */
+    unsigned int k = compose(prev + 0x60, c);
+    return k && k - 0x60 <= 0x3094 ? k - 0x60 : 0;
+  }
+  if( handakuten ) return prev >= 0x30CF && prev <= 0x30DB && (prev - 0x30CF)%3 == 0 ? prev + 2 : 0;
+  if( prev == 0x30A6 ) return 0x30F4;  /* ウ → ヴ */
+  if( (prev >= 0x30AB && prev <= 0x30C1 && (prev - 0x30AB)%2 == 0)
+      || prev == 0x30C4 || prev == 0x30C6 || prev == 0x30C8
+      || prev == 0x309D || prev == 0x30FD ) return prev + 1;
+  if( prev >= 0x30CF && prev <= 0x30DB && (prev - 0x30CF)%3 == 0 ) return prev + 1;
+  if( prev >= 0x30EF && prev <= 0x30F2 ) return prev + 8;  /* ワヰヱヲ → ヷヸヹヺ */
   return 0;
 }
 
@@ -209,8 +223,8 @@ static int emitBigrams(Ctx *ctx, const char *text, int iStart, int iEnd, int uni
   for(int i = iStart; i < iEnd; ){
     unsigned int cp;
     int len = utf8Decode((const unsigned char*)text + i, iEnd - i, &cp);
-    if( (cp == 0xFF9E || cp == 0xFF9F) && n ){
-      unsigned int combined = voiced(a[n-1].cp, cp);
+    if( n ){
+      unsigned int combined = compose(a[n-1].cp, cp);
       if( combined ){
         a[n-1].cp = combined;
         a[n-1].end = i + len;
