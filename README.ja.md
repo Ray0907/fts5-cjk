@@ -14,7 +14,7 @@ FTS5 に付属する 3 つのトークナイザは、どれも日本語に使え
 
 ## `cjk` がすること
 
-日本語・中国語・韓国語の連続した部分を、前後が重なる 2 文字のトークン（bigram）に分けます。Lucene の `CJKAnalyzer`、Elasticsearch の `cjk` アナライザ、Groonga のデフォルトと同じ方式です。それ以外の文字はそのまま `unicode61` に渡すので、英語の大文字小文字やアクセントの扱い、`unicode61` のオプションはすべてそのまま使えます。
+日本語・中国語・韓国語の連続した部分を、前後が重なる 2 文字のトークン（bigram）に分けます。Lucene の `CJKAnalyzer`、Elasticsearch の `cjk` アナライザ、Groonga のデフォルトと同じ方式です。それ以外の文字はそのまま `unicode61` に渡すので、英語の大文字小文字やアクセントの扱い、`unicode61` のオプションはすべてそのまま使えます。連続部分の最初と最後の文字は単独でも索引に登録するので、`5月` や `第38條` のように英字や数字に隣接した文字も見つかります。
 
 ```sql
 .load ./cjk
@@ -35,6 +35,21 @@ SELECT highlight(t, 0, '[', ']') FROM t WHERE t MATCH '滋賀県';
 CREATE VIRTUAL TABLE t USING fts5(body, tokenize='cjk remove_diacritics 2');
 ```
 
+## 検索ボックスの入力：`cjk_query()`
+
+検索ボックスに入力された文字列をそのまま `MATCH` に渡すのは安全ではありません。`C++` は構文エラー、`勞工-退休` は列の指定と解釈され、`"` 1 つだけだと閉じていない文字列になります。この拡張は `cjk_query()` も登録しており、こうした入力を `MATCH` 用の文字列に変換します。
+
+```sql
+SELECT cjk_query('C++ 勞工-退休');   -- "C++" "勞工-退休"
+SELECT cjk_query('湖');              -- "湖"*
+SELECT * FROM t WHERE t MATCH cjk_query('滋賀最大', 't');
+                                    -- ヒット："滋賀" "最大" に書き換え
+```
+
+- `cjk_query(text)` は ASCII の空白と全角スペース U+3000 で語に分け（U+00A0 などほかの Unicode 空白は区切りになりません）、各語をダブルクォートで囲み、CJK 1 文字だけの語には `*` を付けます。語がない入力は `""` になり、何にもヒットしません。
+- `cjk_query(text, 'table')` はテーブルも参照します。1 つのフレーズとしてヒットしない CJK の語を、ヒット数が最も多い位置で分割します。まず 2 分割を試し、12 文字以下の語なら 3 分割も試します。どの分割もヒットしなければ元の語のままです。試行のたびにクエリを 1 回実行するので、分割するのは 32 文字以下の語だけで、1 回の呼び出しで試行は最大 256 回です。残りの回数で足りない語は分割しません。分割結果はテーブルの内容次第なので、同じ入力でも別のデータベースでは違う書き換えになることがあります。
+- 2 引数の形は指定されたテーブルを読むため、SQLite はトリガーとビューの中での使用を拒否します。名前は 1 つの識別子としてクォートされるので、`schema.table` ではなくテーブル名を渡してください。
+
 ## ビルド
 
 ```sh
@@ -45,6 +60,21 @@ make test   # test.sql を sqlite3 で実行し、test.expected と diff
 ビルドに必要なのは C コンパイラだけです。SQLite のヘッダは `vendor/sqlite/` にあります。読み込みとテストには、FTS5 と拡張の読み込みに対応した `sqlite3` が必要です。macOS では Homebrew のもの（`brew install sqlite`）を使ってください。OS 付属の `sqlite3` は拡張を読み込めません。
 
 `make asan-test` は AddressSanitizer と UBSan で拡張をビルドし、不正な UTF-8 を含むランダムなバイト列を与えます。`libsqlite3` をリンクします（macOS は Homebrew、Debian / Ubuntu は `libsqlite3-dev`）。
+
+### 静的リンク
+
+拡張を実行時に読み込まず SQLite をプログラムに組み込む場合は、`cjk.c` を `-DSQLITE_CORE` 付きでコンパイルし、接続を開く前に登録します。
+
+```c
+int sqlite3_cjk_init(sqlite3*, char**, const sqlite3_api_routines*);
+sqlite3_auto_extension((void(*)(void))sqlite3_cjk_init);
+```
+
+```sh
+cc -DSQLITE_CORE -DSQLITE_ENABLE_FTS5 app.c cjk.c sqlite3.c -lm
+```
+
+amalgamation（`sqlite3.c`）には `-DSQLITE_ENABLE_FTS5` が必要です。ないと読み込み時に `cjk: fts5 not available` になります。`make static-test` はこの方法で `test/static.c` をビルドし、`libsqlite3` とリンクします。
 
 ## 結果
 
@@ -95,11 +125,14 @@ make test   # test.sql を sqlite3 で実行し、test.expected と diff
 ## 知っておくこと
 
 - 空白なしの 1 語は 1 つのフレーズです。`MATCH '滋賀県'` は部分文字列「滋賀県」を意味します。2 語を AND したいときは空白で区切ります。
-- デフォルトでは 1 文字のクエリは、その文字が単独で現れる文書にしかヒットしません。`MATCH '湖*'` を使うか、`tokenize='cjk unigram 1'` で 1 文字も索引に登録できます（法令 4.7 万条の実測でインデックスは約 70% 増）。
-- 全角 ASCII と半角カタカナ（濁点・半濁点を含む）、および 臺→台、裡→裏、羣→群、峯→峰、綫→線、衞→衛、爲→為、眞→真、敎→教、册→冊、祕→秘、啓→啟、淸→清、靑→青 を索引時・検索時に正規化します。その他の繁体字・簡体字変換はしません。
-- アップグレード後は既存のインデックスを再構築してください：`INSERT INTO t(t) VALUES('rebuild')`。
-- 漢字、ひらがな、カタカナ、ハングルを CJK として扱います。CJK の句読点は区切りです。
-- `unigram 1` なしのインデックスサイズは `trigram` と同程度です。
+- `*` なしの 1 文字は、その文字が単独で現れる箇所か、CJK の連続部分の先頭か末尾（`5月` の「月」など）にしかヒットしません。連続部分の途中の文字は bigram の一部としてしか存在しないので、すべての出現を探すには `MATCH '湖*'` を使います。`cjk_query` は `*` を自動で付けます。`tokenize='cjk unigram 1'` ですべての文字を索引に登録することもできます（法令 4.7 万条の実測で 26.3 MB、デフォルトは 18.3 MB）。
+- 下記の統一（臺→台などの異体字、全角と半角、NFD の合成）による差を除けば、2 文字以上の CJK の語と、`湖*` のように書いた 1 文字では、`cjk` の結果は `LIKE` による走査と一致します。英字と数字は従来どおり `unicode61` の語単位で一致するので、`5月` で `15月` は見つかりません。
+- `+` でつないだ文字列は別々にトークン化されるので、`iphone + 手機` は `iPhone手機` を見つけません。インデックスでは 2 つの間に「手」が入るためです。`iphone手機` と 1 語で書いてください。
+- `detail` はデフォルトの `'full'` のままにしてください。`detail='column'` や `detail='none'` では FTS5 がフレーズクエリを受け付けません。ここでは 3 文字以上の CJK のクエリや、CJK が英字・数字に隣接したクエリはすべてフレーズなので、`phrase queries are not supported` エラーになります。
+- 全角 ASCII と半角カタカナ（濁点・半濁点を含む）、および 臺→台、裡→裏、羣→群、峯→峰、綫→線、衞→衛、爲→為、眞→真、敎→教、册→冊、祕→秘、啓→啟、淸→清、靑→青 を索引時・検索時に正規化します。その他の繁体字・簡体字変換はしません。NFD のテキスト（結合用濁点付きのかな、字母に分かれたハングル）は合成するので、NFC のクエリで見つかります。
+- 索引の内容はバージョンによって変わるので、アップグレード後は既存のインデックスを再構築してください：`INSERT INTO t(t) VALUES('rebuild')`。
+- 漢字、ひらがな、カタカナ、ハングル、および 々〆〇 を CJK として扱います。その他の CJK の句読点は区切りです。
+- 法令 47,281 条でのインデックスサイズ：`unicode61` 11.7 MB、`cjk` 18.3 MB、`cjk unigram 1` 26.3 MB、`trigram` 27.7 MB。`cjk` は `trigram` より約 3 分の 1 小さくなります。
 
 ## 対応する文字
 
@@ -115,7 +148,7 @@ make test   # test.sql を sqlite3 で実行し、test.expected と diff
 
 | | 方式 | 依存 |
 |---|---|---|
-| `cjk`（本プロジェクト） | 文字 bigram、残りは unicode61 | なし、C 279 行 |
+| `cjk`（本プロジェクト） | 文字 bigram、残りは unicode61 | なし、C 432 行 |
 | [wangfenjin/simple](https://github.com/wangfenjin/simple) | 1 文字単位、任意で jieba と拼音 | C++、jieba 辞書 |
 | [streetwriters/sqlite-better-trigram](https://github.com/streetwriters/sqlite-better-trigram) | 短い語にフォールバックする trigram | TypeScript |
 | [cwt/fts5-icu-tokenizer](https://github.com/cwt/fts5-icu-tokenizer) | ICU の word break iterator | ICU データ |
@@ -123,7 +156,7 @@ make test   # test.sql を sqlite3 で実行し、test.expected と diff
 
 ## なぜ辞書ではなく bigram か
 
-辞書型トークナイザの品質は辞書の品質です。bigram は未知語を取りこぼしません。できないのは「滋賀最大」のような空白なしのクエリを 2 語に分けることです。FTS5 はトークナイザを呼ぶ前にフレーズ構造を決めてしまうので、この分割は FTS5 の上の層、たとえばクエリを書き換える SQL 関数で行う必要があります。それが次のステップです。
+辞書型トークナイザの品質は辞書の品質です。bigram は未知語を取りこぼしません。できないのは「滋賀最大」のような空白なしのクエリを 2 語に分けることです。FTS5 はトークナイザを呼ぶ前にフレーズ構造を決めてしまうので、この分割は FTS5 の上の層で行う必要があります。`cjk_query(text, table)` がそこで、インデックス自体を辞書として使って分割します。
 
 ## ライセンス
 

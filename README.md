@@ -14,7 +14,7 @@ FTS5 ships three tokenizers and none of them work for CJK text:
 
 ## What `cjk` does
 
-CJK runs are indexed as overlapping character bigrams, the same idea as Lucene's `CJKAnalyzer` and Elasticsearch's `cjk` analyzer. Text in any other script is passed to `unicode61` untouched, so Latin words keep case folding, diacritic handling and all of unicode61's options.
+CJK runs are indexed as overlapping character bigrams, the same idea as Lucene's `CJKAnalyzer` and Elasticsearch's `cjk` analyzer. Text in any other script is passed to `unicode61` untouched, so Latin words keep case folding, diacritic handling and all of unicode61's options. The first and last character of each CJK run are also indexed on their own, so a character next to Latin text or digits, as in `5月` or `第38條`, can be found.
 
 ```sql
 .load ./cjk
@@ -35,6 +35,21 @@ Arguments after the name go to `unicode61`:
 CREATE VIRTUAL TABLE t USING fts5(body, tokenize='cjk remove_diacritics 2');
 ```
 
+## Search-box input: `cjk_query()`
+
+Text typed into a search box is not safe to pass to `MATCH`: `C++` is a syntax error, `勞工-退休` reads as a column filter, and a lone `"` is an unterminated string. The extension also registers `cjk_query()`, which turns that text into a `MATCH` string:
+
+```sql
+SELECT cjk_query('C++ 勞工-退休');   -- "C++" "勞工-退休"
+SELECT cjk_query('茶');              -- "茶"*
+SELECT * FROM t WHERE t MATCH cjk_query('南投魚池', 't');
+                                    -- found: rewritten to "南投" "魚池"
+```
+
+- `cjk_query(text)` splits on ASCII whitespace and the ideographic space U+3000 (other Unicode spaces, such as U+00A0, stay inside a word), double-quotes each word and appends `*` to a word that is a single CJK character. Input with no words becomes `""`, which matches nothing.
+- `cjk_query(text, 'table')` also consults the table. A CJK word that has no hits as one phrase is split where the pieces have the most hits: first into two pieces, then, for words of up to 12 characters, into three. If no split has hits, the word is kept. Every probe is a query, so only words of up to 32 characters are split, and one call runs at most 256 probes; a word that does not fit the remaining budget is kept whole. The split depends on what the table contains, so the same input can be rewritten differently in another database.
+- The two-argument form reads the table it is given, so SQLite refuses it inside triggers and views. The name is quoted as one identifier: pass a table name, not `schema.table`.
+
 ## Build
 
 ```sh
@@ -45,6 +60,21 @@ make test   # runs test.sql through sqlite3 and diffs against test.expected
 Building needs only a C compiler: the SQLite headers are in `vendor/sqlite/`. Loading and testing need a `sqlite3` with FTS5 and extension loading. On macOS use Homebrew's (`brew install sqlite`); the system `sqlite3` refuses to load extensions.
 
 `make asan-test` builds the extension with AddressSanitizer and UBSan and feeds it random bytes, including invalid UTF-8. It links `libsqlite3` (Homebrew's on macOS, `libsqlite3-dev` on Debian and Ubuntu).
+
+### Static linking
+
+When SQLite is compiled into the program instead of loading extensions at run time, compile `cjk.c` with `-DSQLITE_CORE` and register it before opening a connection:
+
+```c
+int sqlite3_cjk_init(sqlite3*, char**, const sqlite3_api_routines*);
+sqlite3_auto_extension((void(*)(void))sqlite3_cjk_init);
+```
+
+```sh
+cc -DSQLITE_CORE -DSQLITE_ENABLE_FTS5 app.c cjk.c sqlite3.c -lm
+```
+
+The amalgamation (`sqlite3.c`) needs `-DSQLITE_ENABLE_FTS5`, or loading fails with `cjk: fts5 not available`. `make static-test` builds `test/static.c` this way against `libsqlite3`.
 
 ## Results
 
@@ -102,11 +132,14 @@ Korean is written with spaces, so `unicode61` does find the bare word. It misses
 ## Things to know
 
 - One bareword is one phrase. `MATCH '魚池鄉'` means the substring 魚池鄉. To AND two words, separate them with a space.
-- By default, a single-character query only matches documents where that character stands alone. Use `MATCH '茶*'`, or create the table with `tokenize='cjk unigram 1'` to index single characters too (about 70% larger index on 47k law articles).
-- Full-width ASCII and half-width katakana (including voiced marks) are folded. The variants 臺→台, 裡→裏, 羣→群, 峯→峰, 綫→線, 衞→衛, 爲→為, 眞→真, 敎→教, 册→冊, 祕→秘, 啓→啟, 淸→清, 靑→青 are folded at index and query time; other traditional/simplified mappings are not.
-- Rebuild existing indexes after upgrading: `INSERT INTO t(t) VALUES('rebuild')`.
-- Han, hiragana, katakana and hangul count as CJK. CJK punctuation is a separator.
-- Without `unigram 1`, index size is in the same range as `trigram`.
+- A single character without `*` matches only where it stands alone or at the start or end of a CJK run, such as 月 in `5月`. Inside a run it exists only as part of a bigram, so use `MATCH '茶*'` to find every occurrence; `cjk_query` adds the `*` for you. Or create the table with `tokenize='cjk unigram 1'` to index every character (26.3 MB instead of 18.3 MB on 47k law articles).
+- After the folding listed below (variants such as 臺→台, full-width and half-width forms, NFD composition), the `cjk` counts equal a `LIKE` scan for CJK words of two or more characters and for single characters written as `茶*`. Latin text and digits still match as whole `unicode61` words, so `5月` does not find `15月`.
+- `+` joins strings that are tokenized separately, so `iphone + 手機` does not find `iPhone手機`: the index holds 手 between them. Write `iphone手機` as one bareword.
+- Keep the default `detail='full'`. With `detail='column'` or `detail='none'`, FTS5 rejects phrase queries, and here every query of three or more CJK characters, or of CJK next to Latin text or digits, is a phrase: it fails with `phrase queries are not supported`.
+- Full-width ASCII and half-width katakana (including voiced marks) are folded. NFD text, kana with combining voiced marks and Hangul as conjoining jamo, is composed, so it matches NFC queries. The variants 臺→台, 裡→裏, 羣→群, 峯→峰, 綫→線, 衞→衛, 爲→為, 眞→真, 敎→教, 册→冊, 祕→秘, 啓→啟, 淸→清, 靑→青 are folded at index and query time; other traditional/simplified mappings are not.
+- Rebuild existing indexes after upgrading, since what gets indexed changes between versions: `INSERT INTO t(t) VALUES('rebuild')`.
+- Han, hiragana, katakana, hangul and the marks 々〆〇 count as CJK. Other CJK punctuation is a separator.
+- Index size on the 47,281 law articles: `unicode61` 11.7 MB, `cjk` 18.3 MB, `cjk unigram 1` 26.3 MB, `trigram` 27.7 MB. `cjk` is about a third smaller than `trigram`.
 
 ## Languages
 
@@ -122,7 +155,7 @@ Korean is written with spaces, so `unicode61` does find the bare word. It misses
 
 | | approach | dependencies |
 |---|---|---|
-| `cjk` (this) | character bigrams, unicode61 for the rest | none, 279 lines of C |
+| `cjk` (this) | character bigrams, unicode61 for the rest | none, 432 lines of C |
 | [wangfenjin/simple](https://github.com/wangfenjin/simple) | per character, optional jieba, pinyin | C++, jieba dictionary |
 | [streetwriters/sqlite-better-trigram](https://github.com/streetwriters/sqlite-better-trigram) | trigram with a fallback for short words | TypeScript |
 | [cwt/fts5-icu-tokenizer](https://github.com/cwt/fts5-icu-tokenizer) | ICU word break iterator | ICU data |
@@ -130,7 +163,7 @@ Korean is written with spaces, so `unicode61` does find the bare word. It misses
 
 ## Why bigrams instead of a dictionary
 
-A dictionary tokenizer is only as good as its dictionary, and Traditional Chinese dictionaries are thin. Bigrams never miss a word they have not seen. What they cannot do is split a no-space query such as 南投魚池 into two words. FTS5 decides phrase structure before it calls the tokenizer, so that split has to happen above FTS5, for example in an SQL function that rewrites the query. That is the planned next step.
+A dictionary tokenizer is only as good as its dictionary, and Traditional Chinese dictionaries are thin. Bigrams never miss a word they have not seen. What they cannot do is split a no-space query such as 南投魚池 into two words. FTS5 decides phrase structure before it calls the tokenizer, so that split has to happen above FTS5. `cjk_query(text, table)` does it there, using the index as its dictionary.
 
 ## License
 
