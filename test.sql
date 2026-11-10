@@ -79,6 +79,13 @@ SELECT '# B2 5b must not match 5AB'; SELECT count(*) FROM b WHERE b MATCH '5b';
 SELECT '# B3 two runs in one query string'; SELECT highlight(b, 0, '[', ']') FROM b WHERE b MATCH '南投縣，魚池鄉';
 SELECT '# B4 unigram 1 mixed query'; INSERT INTO u(rowid, body) VALUES (12, '新款iPhone手機');
 SELECT highlight(u, 0, '[', ']') FROM u WHERE u MATCH 'iphone手機';
+SELECT '# N1 NFD kana and Hangul jamo compose';
+CREATE VIRTUAL TABLE n USING fts5(body, tokenize='cjk');
+INSERT INTO n(rowid, body) VALUES (1, char(0x304B,0x3099,0x3063,0x3053,0x3046)),
+  (2, char(0x1112,0x1161,0x11AB,0x1100,0x1173,0x11AF)), (3, char(0x306F,0x309A,0x3093));
+SELECT rowid, highlight(n, 0, '[', ']') FROM n WHERE n MATCH 'がっこう';
+SELECT rowid, highlight(n, 0, '[', ']') FROM n WHERE n MATCH '한글';
+SELECT rowid, highlight(n, 0, '[', ']') FROM n WHERE n MATCH 'ぱん';
 SELECT '# F12 invalid unigram rejected';
 .bail off
 CREATE VIRTUAL TABLE invalid_unigram USING fts5(body, tokenize='cjk unigram 2');

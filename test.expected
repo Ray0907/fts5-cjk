@@ -136,5 +136,9 @@ sqlite
 [南投縣，魚池鄉]
 # B4 unigram 1 mixed query
 新款[iPhone手機]
+# N1 NFD kana and Hangul jamo compose
+1|[がっこう]
+2|[한글]
+3|[ぱん]
 # F12 invalid unigram rejected
 error in tokenizer constructor
