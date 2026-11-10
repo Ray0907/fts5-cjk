@@ -69,10 +69,11 @@ for q in 勞工退休 勞工保險條例; do
 done
 # Variant folding works in both directions.
 check "台灣" "$(n c 台灣)" "$(n c 臺灣)"
-# Single characters need unigram 1.
+# A single character is complete as a prefix query, or bare with unigram 1.
 for q in 稅 罰 茶; do
-  echo "single char $q: cjk $(n c $q), cjk unigram 1 $(n cu $q)"
-  check "$q (unigram)" "$(n cu $q)" "$(like "body LIKE '%$q%'")"
+  w=$(like "body LIKE '%$q%'")
+  echo "single char $q: cjk $(n c $q), cjk $q* $(n c "$q*"), cjk unigram 1 $(n cu $q)"
+  check "$q*" "$(n c "$q*")" "$w"; check "$q (unigram)" "$(n cu $q)" "$w"
 done
 
 [ $fail = 0 ] && echo "PASS: every cjk count equals the LIKE scan" || { echo FAIL; exit 1; }
