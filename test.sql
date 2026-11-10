@@ -59,6 +59,13 @@ SELECT '# F14 著 must not fold to 着';
 INSERT INTO u(rowid, body) VALUES (10, '到着'), (11, '著者');
 SELECT rowid FROM u WHERE u MATCH '著者';
 SELECT count(*) FROM u WHERE rowid=10 AND u MATCH '著';
+SELECT '# F15 々 〆 〇 are CJK';
+CREATE VIRTUAL TABLE j USING fts5(body, tokenize='cjk');
+INSERT INTO j(rowid, body) VALUES (1, '多くの人々が集まった'), (2, '佐々木さん'), (3, '〆切は金曜'), (4, '西暦二〇二四年');
+SELECT rowid FROM j WHERE j MATCH '人々';
+SELECT rowid FROM j WHERE j MATCH '佐々木';
+SELECT rowid FROM j WHERE j MATCH '〆切';
+SELECT rowid FROM j WHERE j MATCH '二〇二四';
 SELECT '# F12 invalid unigram rejected';
 .bail off
 CREATE VIRTUAL TABLE invalid_unigram USING fts5(body, tokenize='cjk unigram 2');

@@ -105,5 +105,10 @@ sqlite
 # F14 著 must not fold to 着
 11
 0
+# F15 々 〆 〇 are CJK
+1
+2
+3
+4
 # F12 invalid unigram rejected
 error in tokenizer constructor

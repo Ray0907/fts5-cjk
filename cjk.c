@@ -36,10 +36,10 @@ typedef struct Ctx {
   int base;                /* byte offset of the segment passed to the parent */
 } Ctx;
 
-/* Han, Hiragana, Katakana, Hangul. CJK punctuation (U+3000-303F) is not included
-** so unicode61 treats it as a separator. */
+/* Han, Hiragana, Katakana, Hangul, and the ideographic marks 々〆〇 that sit
+** inside words. The rest of CJK punctuation (U+3000-303F) is a separator. */
 static int isCJK(unsigned int c){
-  return (c >= 0x3400 && c <= 0x4DBF) || (c >= 0x4E00 && c <= 0x9FFF)
+  return (c >= 0x3005 && c <= 0x3007) || (c >= 0x3400 && c <= 0x4DBF) || (c >= 0x4E00 && c <= 0x9FFF)
       || (c >= 0xF900 && c <= 0xFAFF) || (c >= 0x20000 && c <= 0x3FFFD)
       || (c >= 0x3040 && c <= 0x30FF) || (c >= 0x31F0 && c <= 0x31FF)
       || (c >= 0xFF66 && c <= 0xFF9F)
