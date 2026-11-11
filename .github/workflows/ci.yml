@@ -32,7 +32,7 @@ jobs:
       - name: build
         shell: bash
         run: |
-          gcc -O2 -Wall -shared -static-libgcc -Ivendor/sqlite -o cjk.dll cjk.c
+          gcc -O2 -Wall -shared -static-libgcc -Iinclude -o cjk.dll cjk.c
           objdump -p cjk.dll | grep 'DLL Name'
           ! objdump -p cjk.dll | grep -iE 'DLL Name: (libgcc|libwinpthread)'
       - name: smoke test

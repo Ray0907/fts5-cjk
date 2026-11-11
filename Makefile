@@ -5,20 +5,20 @@ SAN := -fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-fr
 SQLITE_LIB ?= $(if $(filter Darwin,$(UNAME)),-L/opt/homebrew/opt/sqlite/lib,) -lsqlite3
 
 cjk.$(EXT): cjk.c
-	$(CC) $(CFLAGS) -Ivendor/sqlite -shared -o $@ $<
+	$(CC) $(CFLAGS) -Iinclude -shared -o $@ $<
 
 test: cjk.$(EXT)
 	./test.sh
 
 cjk-asan.$(EXT): cjk.c
-	$(CC) -Wall -fPIC $(SAN) -Ivendor/sqlite -shared -o $@ $<
+	$(CC) -Wall -fPIC $(SAN) -Iinclude -shared -o $@ $<
 
 asan-test: cjk-asan.$(EXT) test/asan.c
-	$(CC) -Wall $(SAN) -Ivendor/sqlite -o $@ test/asan.c $(SQLITE_LIB)
+	$(CC) -Wall $(SAN) -Iinclude -o $@ test/asan.c $(SQLITE_LIB)
 	./$@ ./cjk-asan.$(EXT)
 
 static-test: cjk.c test/static.c
-	$(CC) -Wall -DSQLITE_CORE -Ivendor/sqlite -o $@ test/static.c cjk.c $(SQLITE_LIB)
+	$(CC) -Wall -DSQLITE_CORE -Iinclude -o $@ test/static.c cjk.c $(SQLITE_LIB)
 	./$@
 
 clean:

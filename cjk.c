@@ -415,6 +415,11 @@ __declspec(dllexport)
 #endif
 int sqlite3_cjk_init(sqlite3 *db, char **pzErr, const sqlite3_api_routines *pApiRoutines){
   SQLITE_EXTENSION_INIT2(pApiRoutines);
+#ifdef CJK_BUSY_TIMEOUT_MS
+  /* Static builds only: a driver that sets its lock policy after auto-extensions
+  ** run would otherwise see a concurrent writer as "fts5 not available". */
+  sqlite3_busy_timeout(db, CJK_BUSY_TIMEOUT_MS);
+#endif
   fts5_api *pApi = fts5ApiFromDb(db);
   if( !pApi ){
     *pzErr = sqlite3_mprintf("cjk: fts5 not available");

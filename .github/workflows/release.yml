@@ -37,7 +37,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: bash
         run: |
-          gcc -O2 -Wall -shared -static-libgcc -Ivendor/sqlite -o cjk.dll cjk.c
+          gcc -O2 -Wall -shared -static-libgcc -Iinclude -o cjk.dll cjk.c
           python test/smoke.py ./cjk.dll
           7z a cjk-${{ matrix.name }}.zip cjk.dll LICENSE
       - uses: actions/upload-artifact@v4

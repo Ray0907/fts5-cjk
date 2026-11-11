@@ -57,7 +57,7 @@ make        # cjk.dylib on macOS, cjk.so elsewhere
 make test   # runs test.sql through sqlite3 and diffs against test.expected
 ```
 
-Building needs only a C compiler: the SQLite headers are in `vendor/sqlite/`. Loading and testing need a `sqlite3` with FTS5 and extension loading. On macOS use Homebrew's (`brew install sqlite`); the system `sqlite3` refuses to load extensions.
+Building needs only a C compiler: the SQLite headers are in `include/`. Loading and testing need a `sqlite3` with FTS5 and extension loading. On macOS use Homebrew's (`brew install sqlite`); the system `sqlite3` refuses to load extensions.
 
 `make asan-test` builds the extension with AddressSanitizer and UBSan and feeds it random bytes, including invalid UTF-8. It links `libsqlite3` (Homebrew's on macOS, `libsqlite3-dev` on Debian and Ubuntu).
 
