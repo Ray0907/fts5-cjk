@@ -165,6 +165,12 @@ Korean is written with spaces, so `unicode61` does find the bare word. It misses
 
 A dictionary tokenizer is only as good as its dictionary, and Traditional Chinese dictionaries are thin. Bigrams never miss a word they have not seen. What they cannot do is split a no-space query such as 南投魚池 into two words. FTS5 decides phrase structure before it calls the tokenizer, so that split has to happen above FTS5. `cjk_query(text, table)` does it there, using the index as its dictionary.
 
+## Used by
+
+- [kioku](https://github.com/Ray0907/kioku) searches coding-agent session transcripts with `cjk` linked in. Write-up: [Search your Claude Code and Codex sessions](https://raytien.me/writing/kioku/).
+
+Project page: [raytien.me/fts5-cjk/en/](https://raytien.me/fts5-cjk/en/) ([繁體中文](https://raytien.me/fts5-cjk/)).
+
 ## License
 
 MIT
