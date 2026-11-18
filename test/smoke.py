@@ -16,5 +16,5 @@ print("smoke", "ok" if rows == [(1,)] else "FAIL", rows)
 q = db.execute("SELECT cjk_rank_query(?)", ("日月潭在哪？",)).fetchone()[0]
 ranked = db.execute("SELECT rowid FROM t WHERE t MATCH ? ORDER BY rank", (q,)).fetchall()
 ok_rank = q == '"日" OR "日月" OR "月潭" OR "潭在" OR "在哪"' and ranked == [(1,)]
-print("smoke rank", "ok" if ok_rank else "FAIL", q, ranked)
+print("smoke rank", "ok" if ok_rank else "FAIL", ascii(q), ranked)
 sys.exit(rows != [(1,)] or not ok_rank)
