@@ -19,7 +19,9 @@
 ** substring match. Space-separated words are ANDed as usual.
 **
 ** The extension also registers cjk_query(text [, table]), which turns raw
-** search-box text into a MATCH string; see cjkQueryFunc.
+** search-box text into a MATCH string (see cjkQueryFunc), and
+** cjk_rank_query(text [, mode]), which turns it into an OR query for ranking
+** with bm25 (see cjkRankQueryFunc).
 */
 #include "sqlite3ext.h"
 SQLITE_EXTENSION_INIT1
@@ -399,6 +401,113 @@ static void cjkQueryFunc(sqlite3_context *pCtx, int argc, sqlite3_value **argv){
   sqlite3_free(off);
 }
 
+/* cjk_rank_query(text [, mode]) builds an OR query for ranking with bm25 from
+** the terms a default cjk table indexes for text: bigrams, unicode61 words and
+** the first and last character of each CJK run. mode 'first' (the default)
+** keeps each run's first character and leaves out its last; 'edge' keeps both.
+** Each distinct term is quoted once (bm25 sums over phrases, so a repeat would
+** count twice) and at most RANK_MAX_TERMS terms are kept, in the order they
+** first occur; the rest of the text is not read. */
+#define RANK_MAX_TERMS 128
+
+typedef struct RankCtx {
+  sqlite3_str *out;        /* the MATCH string */
+  sqlite3_str *terms;      /* the distinct terms, unquoted, back to back */
+  int aOff[RANK_MAX_TERMS + 1];  /* term i is terms[aOff[i] .. aOff[i+1]) */
+  unsigned char aSlot[2 * RANK_MAX_TERMS];  /* hash set of term index + 1 */
+  int nTerm;
+  int edge;                /* keep run-final characters */
+  unsigned int prevLast;   /* second character of the previous term, if that */
+  int prevBigram;          /* term was two CJK characters */
+} RankCtx;
+
+/* Returned by rankCb to stop tokenizing once RANK_MAX_TERMS terms are kept. */
+#define RANK_FULL SQLITE_DONE
+
+static unsigned int rankHash(const char *z, int n){
+  unsigned int h = 2166136261u;
+  for(int i = 0; i < n; i++) h = (h ^ (unsigned char)z[i]) * 16777619u;
+  return h;
+}
+
+static int rankCb(void *p, int tflags, const char *z, int n, int iStart, int iEnd){
+  RankCtx *r = (RankCtx*)p;
+  unsigned int c1 = 0, c2 = 0;
+  int l1 = 0, l2 = 0;
+  (void)tflags; (void)iStart; (void)iEnd;
+  if( n <= 0 ) return SQLITE_OK;
+  l1 = utf8Decode((const unsigned char*)z, n, &c1);
+  if( l1 < n ) l2 = utf8Decode((const unsigned char*)z + l1, n - l1, &c2);
+  /* In document mode, a run's last character directly follows the bigram that
+  ** ends with it. Nothing else does: a run's first character follows the
+  ** previous run's last character or a unicode61 word, never a bigram. */
+  int isLast = l1 == n && isCJK(c1) && r->prevBigram && r->prevLast == c1;
+  r->prevBigram = l1 + l2 == n && l2 > 0 && isCJK(c1) && isCJK(c2);
+  r->prevLast = c2;
+  if( isLast && !r->edge ) return SQLITE_OK;
+
+  unsigned int h = rankHash(z, n);
+  const int nSlot = (int)sizeof(r->aSlot);
+  const char *zTerms = sqlite3_str_value(r->terms);
+  int s = (int)(h % (unsigned)nSlot);
+  for(; r->aSlot[s]; s = (s + 1) % nSlot){
+    int k = r->aSlot[s] - 1;
+    if( r->aOff[k+1] - r->aOff[k] == n && memcmp(zTerms + r->aOff[k], z, n) == 0 ) return SQLITE_OK;
+  }
+  if( r->nTerm == RANK_MAX_TERMS ) return RANK_FULL;
+  sqlite3_str_append(r->terms, z, n);
+  r->aSlot[s] = (unsigned char)(r->nTerm + 1);
+  r->aOff[++r->nTerm] = sqlite3_str_length(r->terms);
+
+  if( sqlite3_str_length(r->out) ) sqlite3_str_appendall(r->out, " OR ");
+  sqlite3_str_appendchar(r->out, 1, '"');
+  for(int i = 0; i < n; i++){
+    if( z[i] == '"' ) sqlite3_str_appendchar(r->out, 1, '"');
+    sqlite3_str_appendchar(r->out, 1, z[i]);
+  }
+  sqlite3_str_appendchar(r->out, 1, '"');
+  return sqlite3_str_errcode(r->out) || sqlite3_str_errcode(r->terms) ? SQLITE_NOMEM : SQLITE_OK;
+}
+
+static void cjkRankQueryFunc(sqlite3_context *pCtx, int argc, sqlite3_value **argv){
+  int edge = 0;
+  if( argc == 2 ){
+    const char *zMode = (const char*)sqlite3_value_text(argv[1]);
+    if( zMode && strcmp(zMode, "edge") == 0 ){
+      edge = 1;
+    }else if( !zMode || strcmp(zMode, "first") ){
+      sqlite3_result_error(pCtx, "cjk_rank_query: mode must be 'first' or 'edge'", -1);
+      return;
+    }
+  }
+  const char *z = (const char*)sqlite3_value_text(argv[0]);
+  int n = sqlite3_value_bytes(argv[0]);
+  if( !z ) return;
+  RankCtx *r = sqlite3_malloc(sizeof(*r));
+  if( !r ){ sqlite3_result_error_nomem(pCtx); return; }
+  memset(r, 0, sizeof(*r));
+  r->edge = edge;
+  r->out = sqlite3_str_new(sqlite3_context_db_handle(pCtx));
+  r->terms = sqlite3_str_new(0);
+  Fts5Tokenizer *pTok = 0;
+  int rc = cjkCreate(sqlite3_user_data(pCtx), 0, 0, &pTok);
+  if( rc == SQLITE_OK ) rc = cjkTokenize(pTok, r, FTS5_TOKENIZE_DOCUMENT, z, n, rankCb);
+  if( pTok ) cjkDelete(pTok);
+  if( rc == RANK_FULL ) rc = SQLITE_OK;
+  /* MATCH '' is a syntax error; the empty phrase matches nothing. */
+  if( rc == SQLITE_OK && !sqlite3_str_length(r->out) ) sqlite3_str_appendall(r->out, "\"\"");
+  if( rc == SQLITE_NOMEM || sqlite3_str_errcode(r->out) || sqlite3_str_errcode(r->terms) ){
+    sqlite3_result_error_nomem(pCtx);
+  }else if( rc != SQLITE_OK ){
+    sqlite3_result_error_code(pCtx, rc);
+  }else{
+    sqlite3_result_text(pCtx, sqlite3_str_value(r->out), sqlite3_str_length(r->out), SQLITE_TRANSIENT);
+  }
+  sqlite3_free(sqlite3_str_finish(r->out));
+  sqlite3_free(sqlite3_str_finish(r->terms));
+  sqlite3_free(r);
+}
+
 static fts5_api *fts5ApiFromDb(sqlite3 *db){
   fts5_api *pApi = 0;
   sqlite3_stmt *pStmt = 0;
@@ -433,5 +542,10 @@ int sqlite3_cjk_init(sqlite3 *db, char **pzErr, const sqlite3_api_routines *pApi
   ** schema-defined triggers and views. */
   if( rc == SQLITE_OK ) rc = sqlite3_create_function(db, "cjk_query", 2,
       SQLITE_UTF8 | SQLITE_DIRECTONLY, 0, cjkQueryFunc, 0, 0);
+  /* cjk_rank_query reads no table, so it is safe in triggers and views. */
+  for(int nArg = 1; nArg <= 2 && rc == SQLITE_OK; nArg++){
+    rc = sqlite3_create_function(db, "cjk_rank_query", nArg,
+        SQLITE_UTF8 | SQLITE_DETERMINISTIC | SQLITE_INNOCUOUS, (void*)pApi, cjkRankQueryFunc, 0, 0);
+  }
   return rc;
 }

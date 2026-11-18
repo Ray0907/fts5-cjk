@@ -157,7 +157,60 @@ sqlite
 1
 "日月潭紅茶產" "南投縣魚池鄉"
 1
+# R1 cjk_rank_query: bigrams plus each run's first character, or both edges
+"東" OR "東京" OR "京大" OR "大学" OR "学の" OR "の研" OR "研究"
+"東" OR "東京" OR "京大" OR "大学" OR "学の" OR "の研" OR "研究" OR "究"
+1
+# R2 empty, NULL and whitespace-only input
+NULL|NULL|""|""
+0
+# R3 runs of one and two characters
+"茶"|"茶"|"東" OR "東京"|"東" OR "東京" OR "京"
+"紅" OR "紅茶" OR "茶"|"東" OR "東京" OR "京" OR "京都"|"東" OR "東東"
+# R4 mixed Latin and CJK
+"iphone" OR "手" OR "手機" OR "機殼"|"手" OR "手機" OR "機殼" OR "殼" OR "iphone"|"第" OR "38" OR "條" OR "條規" OR "規定"
+# R5 punctuation: full-width separators split runs; ・ and ー stay inside a run, as in the index
+"南" OR "南投" OR "投縣" OR "魚" OR "魚池" OR "池鄉"|"東" OR "東京"|"ト" OR "トム" OR "ム・" OR "・ク" OR "クル" OR "ルー" OR "ーズ"
+# R6 operators and quotes in the input stay inside quoted terms
+"a" OR "or" OR "b"|"near" OR "東" OR "東京" OR "大" OR "大学" OR "x" OR "y" OR "z" OR "col"|""|"and" OR "not" OR "茶"
+0
+1
+6
+# R7 supplementary-plane Han
+1
+8
+# R8 Hangul syllables, NFD jamo and compatibility jamo
+"한" OR "한국" OR "국어" OR "검" OR "검색"|"한" OR "한글"|"ㅋ" OR "ㅋㅋ"
+# R9 half-width katakana and full-width alphanumerics are folded like the index
+"カ" OR "カタ" OR "タカ" OR "カナ"|"ガ" OR "ガイ" OR "イド"|"sqlite123"|"台" OR "台灣"
+# R10 々 〆 〇 are part of a run
+"佐" OR "佐々" OR "々木"|"〆" OR "〆切"|"二" OR "二〇" OR "〇二" OR "二四"
+2
+# R11 ranking on a default table: first adds the run-opening 日, edge also the run-final 茶
+1
+1
+6
+1
+日月潭紅茶產於南投縣[魚池鄉]
+# R12 at most 128 distinct terms, in order of first occurrence; repeats count once
+1|1|1
+"茶" OR "a" OR "紅" OR "紅茶"
+107
+# R13 invalid UTF-8 never produces an invalid MATCH string
+1
+1
+1
+# R14 unigram 1 tables: a single character term matches every occurrence
+"紅" OR "紅豆"|0
+1
+# R15 deterministic and innocuous: usable in a view
+"南" OR "南投" OR "投魚" OR "魚池"
 # Q3 unknown table is an error
 cjk_query: no such table: no_such_table
+# R16 invalid mode is an error, not a default
+cjk_rank_query: mode must be 'first' or 'edge'
+cjk_rank_query: mode must be 'first' or 'edge'
+cjk_rank_query: mode must be 'first' or 'edge'
+cjk_rank_query: mode must be 'first' or 'edge'
 # F12 invalid unigram rejected
 error in tokenizer constructor

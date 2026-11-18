@@ -105,9 +105,64 @@ SELECT cjk_query(x, 't') = '"' || x || '"' FROM (SELECT replace(hex(zeroblob(20)
 SELECT cjk_query('日月潭紅茶產南投縣魚池鄉', 't');
 SELECT cjk_query(x || ' ' || x || ' ' || x || ' 日月潭紅茶產南投縣魚池鄉', 't') LIKE '%" "日月潭紅茶產南投縣魚池鄉"'
   FROM (SELECT replace(hex(zeroblob(6)), '0', '火') AS x);
+SELECT '# R1 cjk_rank_query: bigrams plus each run''s first character, or both edges';
+SELECT cjk_rank_query('東京大学の研究'); SELECT cjk_rank_query('東京大学の研究', 'edge');
+SELECT cjk_rank_query('東京大学の研究', 'first') = cjk_rank_query('東京大学の研究');
+SELECT '# R2 empty, NULL and whitespace-only input';
+SELECT quote(cjk_rank_query(NULL)), quote(cjk_rank_query(NULL, 'edge')), cjk_rank_query(''), cjk_rank_query(' 　' || char(9, 10, 13));
+SELECT count(*) FROM t WHERE t MATCH cjk_rank_query('');
+SELECT '# R3 runs of one and two characters';
+SELECT cjk_rank_query('茶'), cjk_rank_query('茶', 'edge'), cjk_rank_query('東京'), cjk_rank_query('東京', 'edge');
+SELECT cjk_rank_query('紅茶 茶'), cjk_rank_query('東京 京都'), cjk_rank_query('東東', 'edge');
+SELECT '# R4 mixed Latin and CJK';
+SELECT cjk_rank_query('iPhone手機殼'), cjk_rank_query('手機殼iPhone', 'edge'), cjk_rank_query('第38條規定');
+SELECT '# R5 punctuation: full-width separators split runs; ・ and ー stay inside a run, as in the index';
+SELECT cjk_rank_query('南投縣，魚池鄉。'), cjk_rank_query('「東京」！'), cjk_rank_query('トム・クルーズ');
+SELECT '# R6 operators and quotes in the input stay inside quoted terms';
+SELECT cjk_rank_query('a" OR b'), cjk_rank_query('NEAR(東京 大学) -x +y ^z * col:東京'), cjk_rank_query('"'), cjk_rank_query('AND NOT 茶');
+SELECT count(*) FROM t WHERE t MATCH cjk_rank_query('a" OR b');
+SELECT count(*) FROM t WHERE t MATCH cjk_rank_query('NEAR(東京 大学) -x +y ^z * col:東京');
+SELECT rowid FROM t WHERE t MATCH cjk_rank_query('AND NOT 茶') ORDER BY rowid;
+SELECT '# R7 supplementary-plane Han';
+SELECT cjk_rank_query(char(0x20000, 0x20001) || '字') = '"' || char(0x20000) || '" OR "' || char(0x20000, 0x20001) || '" OR "' || char(0x20001) || '字"';
+SELECT rowid FROM u WHERE u MATCH cjk_rank_query(char(0x31350) || '字');
+SELECT '# R8 Hangul syllables, NFD jamo and compatibility jamo';
+SELECT cjk_rank_query('한국어 검색'), cjk_rank_query(char(0x1112, 0x1161, 0x11AB, 0x1100, 0x1173, 0x11AF)), cjk_rank_query('ㅋㅋㅋ');
+SELECT '# R9 half-width katakana and full-width alphanumerics are folded like the index';
+SELECT cjk_rank_query('ｶﾀｶﾅ'), cjk_rank_query('ｶﾞｲﾄﾞ'), cjk_rank_query('ＳＱＬｉｔｅ１２３'), cjk_rank_query('臺灣');
+SELECT '# R10 々 〆 〇 are part of a run';
+SELECT cjk_rank_query('佐々木'), cjk_rank_query('〆切'), cjk_rank_query('二〇二四');
+SELECT rowid FROM j WHERE j MATCH cjk_rank_query('佐々木さん') ORDER BY rank;
+SELECT '# R11 ranking on a default table: first adds the run-opening 日, edge also the run-final 茶';
+SELECT rowid FROM t WHERE t MATCH cjk_rank_query('日月潭紅茶') ORDER BY rank;
+SELECT rowid FROM t WHERE t MATCH cjk_rank_query('日月潭紅茶', 'edge') ORDER BY rank;
+SELECT rowid FROM t WHERE t MATCH '"日月潭紅茶"';
+SELECT highlight(t, 0, '[', ']') FROM t WHERE t MATCH cjk_rank_query('魚池鄉在哪裡');
+SELECT '# R12 at most 128 distinct terms, in order of first occurrence; repeats count once';
+WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 300)
+SELECT length(q) - length(replace(q, ' OR ', '')) = 4 * 127, q LIKE '"w1" OR "w2" OR %', q LIKE '% OR "w128"'
+  FROM (SELECT cjk_rank_query(group_concat('w' || i, ' ')) AS q FROM n);
+WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 5000)
+SELECT cjk_rank_query(group_concat('茶 a', ' ') || ' 紅茶') FROM n;
+SELECT length(cjk_rank_query(replace(hex(zeroblob(50000)), '0', '日月潭紅茶產於南投縣魚池鄉')));
+SELECT '# R13 invalid UTF-8 never produces an invalid MATCH string';
+SELECT count(*) >= 0 FROM t WHERE t MATCH cjk_rank_query(CAST(x'e88cb6e8' AS TEXT));
+SELECT count(*) >= 0 FROM t WHERE t MATCH cjk_rank_query(CAST(x'ff22e88c' AS TEXT), 'edge');
+SELECT count(*) >= 0 FROM t WHERE t MATCH cjk_rank_query(CAST(x'eda080f0a080e3' AS TEXT));
+SELECT '# R14 unigram 1 tables: a single character term matches every occurrence';
+SELECT cjk_rank_query('紅豆'), count(*) FROM t WHERE rowid = 1 AND t MATCH cjk_rank_query('紅豆');
+SELECT count(*) FROM u WHERE rowid = 1 AND u MATCH cjk_rank_query('紅豆');
+SELECT '# R15 deterministic and innocuous: usable in a view';
+CREATE VIEW rv AS SELECT cjk_rank_query('南投魚池') AS q;
+SELECT q FROM rv;
 SELECT '# Q3 unknown table is an error';
 .bail off
 SELECT cjk_query('南投魚池', 'no_such_table');
+SELECT '# R16 invalid mode is an error, not a default';
+SELECT cjk_rank_query('茶', 'FIRST');
+SELECT cjk_rank_query('茶', '');
+SELECT cjk_rank_query('茶', NULL);
+SELECT cjk_rank_query(NULL, 'edges');
 SELECT '# F12 invalid unigram rejected';
 CREATE VIRTUAL TABLE invalid_unigram USING fts5(body, tokenize='cjk unigram 2');
 .bail on
