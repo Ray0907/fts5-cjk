@@ -21,10 +21,12 @@ static const char *const frag[] = {
   "\xc0\x80", "\xc1\xbf", "\xe0\x80\x80", "\xf8\x88\x80\x80\x80", "\xfe", "\xff",
   "\x80", "\xbf", "\xe3\x80\x85", "\xe3\x82\x99", "\xe3\x82\x9a",
   "\xe1\x84\x92", "\xe1\x85\xa1", "\xe1\x86\xab", "\xea\xb0\x80",
+  "\xe3\x83\xbb", "\xe3\x83\xbc", "\xef\xbc\x8c", "\xe3\x80\x86", "\xe3\x80\x87",
+  "\xef\xbd\xb6\xef\xbe\x9e", "\xe8\x87\xba", "\xe3\x85\x8b", "\xe3\x80\x82", "^", "+", "{", "}",
 };
 
-static size_t gen(unsigned char *buf, size_t cap){
-  size_t n = 0, parts = rnd() % 12;
+static size_t genParts(unsigned char *buf, size_t cap, size_t parts){
+  size_t n = 0;
   size_t i;
   for(i = 0; i < parts; i++){
     uint32_t kind = rnd() % 8;
@@ -40,6 +42,10 @@ static size_t gen(unsigned char *buf, size_t cap){
     }
   }
   return n;
+}
+
+static size_t gen(unsigned char *buf, size_t cap){
+  return genParts(buf, cap, rnd() % 12);
 }
 
 static void check(sqlite3 *db, int rc, const char *what){
@@ -58,6 +64,29 @@ static size_t quote(unsigned char *out, const unsigned char *in, size_t n){
   }
   out[o++] = '"';
   return o;
+}
+
+/* cjk_rank_query on long random input: the result must be a non-empty
+** string of quoted terms joined by OR, with at most 128 terms. */
+static void rankCheck(sqlite3 *db, sqlite3_stmt *pStmt, const unsigned char *buf, size_t n, const char *mode){
+  const char *z;
+  int nOr = 0, len, rc;
+  sqlite3_bind_text(pStmt, 1, (const char*)buf, (int)n, SQLITE_TRANSIENT);
+  sqlite3_bind_text(pStmt, 2, mode, -1, SQLITE_STATIC);
+  rc = sqlite3_step(pStmt);
+  check(db, rc, "cjk_rank_query");
+  z = (const char*)sqlite3_column_text(pStmt, 0);
+  len = sqlite3_column_bytes(pStmt, 0);
+  if( !z || len < 2 || z[0] != '"' || z[len-1] != '"' ){
+    fprintf(stderr, "cjk_rank_query: malformed result\n");
+    exit(1);
+  }
+  for(const char *p = z; (p = strstr(p, "\" OR \"")) != 0; p++) nOr++;
+  if( nOr > 127 ){
+    fprintf(stderr, "cjk_rank_query: %d terms, cap is 128\n", nOr + 1);
+    exit(1);
+  }
+  sqlite3_reset(pStmt);
 }
 
 int main(int argc, char **argv){
@@ -79,7 +108,7 @@ int main(int argc, char **argv){
   }
   for(t = 0; t < sizeof tok / sizeof *tok; t++){
     char sql[200];
-    sqlite3_stmt *ins, *sel, *raw, *cq[2];
+    sqlite3_stmt *ins, *sel, *raw, *cq[4];
     snprintf(sql, sizeof sql, "CREATE VIRTUAL TABLE t%zu USING fts5(body, tokenize='%s')", t, tok[t]);
     check(db, sqlite3_exec(db, sql, 0, 0, 0), "create");
     snprintf(sql, sizeof sql, "INSERT INTO t%zu(body) VALUES(?1)", t);
@@ -91,6 +120,10 @@ int main(int argc, char **argv){
     check(db, sqlite3_prepare_v2(db, sql, -1, &cq[0], 0), "prepare cjk_query");
     snprintf(sql, sizeof sql, "SELECT rowid FROM t%zu WHERE t%zu MATCH cjk_query(?1, 't%zu')", t, t, t);
     check(db, sqlite3_prepare_v2(db, sql, -1, &cq[1], 0), "prepare cjk_query table");
+    snprintf(sql, sizeof sql, "SELECT rowid FROM t%zu WHERE t%zu MATCH cjk_rank_query(?1)", t, t);
+    check(db, sqlite3_prepare_v2(db, sql, -1, &cq[2], 0), "prepare cjk_rank_query");
+    snprintf(sql, sizeof sql, "SELECT rowid FROM t%zu WHERE t%zu MATCH cjk_rank_query(?1, 'edge')", t, t);
+    check(db, sqlite3_prepare_v2(db, sql, -1, &cq[3], 0), "prepare cjk_rank_query edge");
     for(i = 0; i < iters; i++){
       size_t n = gen(buf, sizeof buf), m;
       sqlite3_bind_text(ins, 1, (const char*)buf, (int)n, SQLITE_TRANSIENT);
@@ -104,23 +137,35 @@ int main(int argc, char **argv){
       sqlite3_bind_text(raw, 1, (const char*)buf, (int)n, SQLITE_TRANSIENT);
       while( sqlite3_step(raw) == SQLITE_ROW ) matches++;
       sqlite3_reset(raw);
-      for(m = 0; m < 2; m++){
+      for(m = 0; m < 4; m++){
         int rc;
         sqlite3_bind_text(cq[m], 1, (const char*)buf, (int)n, SQLITE_TRANSIENT);
         while( (rc = sqlite3_step(cq[m])) == SQLITE_ROW ) matches++;
-        check(db, rc, "cjk_query output must be a valid MATCH");
+        check(db, rc, m < 2 ? "cjk_query output must be a valid MATCH"
+                            : "cjk_rank_query output must be a valid MATCH");
         sqlite3_reset(cq[m]);
       }
     }
     sqlite3_finalize(ins);
     sqlite3_finalize(sel);
     sqlite3_finalize(raw);
-    sqlite3_finalize(cq[0]);
-    sqlite3_finalize(cq[1]);
+    for(i = 0; i < 4; i++) sqlite3_finalize(cq[i]);
     snprintf(sql, sizeof sql, "INSERT INTO t%zu(t%zu) VALUES('integrity-check')", t, t);
     check(db, sqlite3_exec(db, sql, 0, 0, 0), "integrity-check");
   }
+  {
+    static unsigned char big[8192];
+    sqlite3_stmt *rq;
+    check(db, sqlite3_prepare_v2(db, "SELECT cjk_rank_query(?1, ?2)", -1, &rq, 0), "prepare rank");
+    for(i = 0; i < iters; i++){
+      size_t n = genParts(big, sizeof big, rnd() % 1200);
+      rankCheck(db, rq, big, n, "first");
+      rankCheck(db, rq, big, n, "edge");
+      rankCheck(db, rq, big, n / 2, "first");  /* may end inside a UTF-8 sequence */
+    }
+    sqlite3_finalize(rq);
+  }
   sqlite3_close(db);
-  printf("asan ok: %d docs per tokenizer, %ld matches\n", iters, matches);
+  printf("asan ok: %d docs per tokenizer, %ld matches, %d long rank inputs\n", iters, matches, 3 * iters);
   return 0;
 }
