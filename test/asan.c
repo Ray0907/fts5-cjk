@@ -66,27 +66,72 @@ static size_t quote(unsigned char *out, const unsigned char *in, size_t n){
   return o;
 }
 
-/* cjk_rank_query on long random input: the result must be a non-empty
-** string of quoted terms joined by OR, with at most 128 terms. */
+/* Returns the number of terms if z[0..len) is exactly "" or "t"( OR "t")*,
+** where each t is non-empty, every '"' inside t is doubled, and no byte is
+** NUL; returns -1 otherwise. "" has no terms. */
+static int rankTerms(const char *z, int len){
+  int i = 0, nTerm = 0;
+  if( len == 2 && z[0] == '"' && z[1] == '"' ) return 0;
+  for(;;){
+    int nByte = 0;
+    if( i >= len || z[i] != '"' ) return -1;
+    for(i++; ; i++){
+      if( i >= len || z[i] == 0 ) return -1;
+      if( z[i] == '"' ){
+        if( i + 1 < len && z[i+1] == '"' ){ i++; nByte++; continue; }
+        break;
+      }
+      nByte++;
+    }
+    if( nByte == 0 ) return -1;
+    nTerm++;
+    i++;                                  /* closing quote */
+    if( i == len ) return nTerm;
+    if( len - i < 5 || memcmp(z + i, " OR \"", 5) ) return -1;
+    i += 4;
+  }
+}
+
+/* cjk_rank_query on long random input: the result must parse as a quoted OR
+** list (rankTerms) with at most 128 terms. */
 static void rankCheck(sqlite3 *db, sqlite3_stmt *pStmt, const unsigned char *buf, size_t n, const char *mode){
   const char *z;
-  int nOr = 0, len, rc;
+  int nTerm, len, rc;
   sqlite3_bind_text(pStmt, 1, (const char*)buf, (int)n, SQLITE_TRANSIENT);
   sqlite3_bind_text(pStmt, 2, mode, -1, SQLITE_STATIC);
   rc = sqlite3_step(pStmt);
   check(db, rc, "cjk_rank_query");
   z = (const char*)sqlite3_column_text(pStmt, 0);
   len = sqlite3_column_bytes(pStmt, 0);
-  if( !z || len < 2 || z[0] != '"' || z[len-1] != '"' ){
-    fprintf(stderr, "cjk_rank_query: malformed result\n");
+  nTerm = z ? rankTerms(z, len) : -1;
+  if( nTerm < 0 ){
+    fprintf(stderr, "cjk_rank_query: malformed result (%d bytes)\n", len);
     exit(1);
   }
-  for(const char *p = z; (p = strstr(p, "\" OR \"")) != 0; p++) nOr++;
-  if( nOr > 127 ){
-    fprintf(stderr, "cjk_rank_query: %d terms, cap is 128\n", nOr + 1);
+  if( nTerm > 128 ){
+    fprintf(stderr, "cjk_rank_query: %d terms, cap is 128\n", nTerm);
     exit(1);
   }
   sqlite3_reset(pStmt);
+}
+
+/* The grammar check itself must reject what it is meant to reject. */
+static void rankTermsSelfTest(void){
+  /* len -1 = strlen; the NUL case gives its length explicitly. */
+  static const struct { const char *z; int len, want; } c[] = {
+    { "\"\"", -1, 0 }, { "\"a\"", -1, 1 }, { "\"a\" OR \"b\"", -1, 2 }, { "\"\"\"\"", -1, 1 },
+    { "\"a\"\"b\"", -1, 1 }, { "", -1, -1 }, { "\"a", -1, -1 }, { "a\"", -1, -1 }, { "\"a\" OR \"\"", -1, -1 },
+    { "\"a\" OR ", -1, -1 }, { "\"a\"OR\"b\"", -1, -1 }, { "\"a\" or \"b\"", -1, -1 }, { "\"a\0b\"", 5, -1 },
+    { "\"a\" OR \"b\" ", -1, -1 }, { "\"\"\"", -1, -1 },
+  };
+  size_t k;
+  for(k = 0; k < sizeof c / sizeof *c; k++){
+    int len = c[k].len < 0 ? (int)strlen(c[k].z) : c[k].len;
+    if( rankTerms(c[k].z, len) != c[k].want ){
+      fprintf(stderr, "rankTerms self-test %d failed\n", (int)k);
+      exit(1);
+    }
+  }
 }
 
 int main(int argc, char **argv){
@@ -100,6 +145,7 @@ int main(int argc, char **argv){
   size_t t;
   int i;
 
+  rankTermsSelfTest();
   check(0, sqlite3_open(":memory:", &db), "open");
   sqlite3_enable_load_extension(db, 1);
   if( sqlite3_load_extension(db, ext, "sqlite3_cjk_init", &err) != SQLITE_OK ){
