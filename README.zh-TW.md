@@ -50,6 +50,35 @@ SELECT * FROM t WHERE t MATCH cjk_query('南投魚池', 't');
 - `cjk_query(text, 'table')` 還會查表。整個詞當 phrase 查不到的中日韓詞，會切在命中最多的位置：先試切成兩段，詞長 12 字以內再試三段。每種切法都沒命中就保留原詞。每次嘗試都是一次查詢，所以只切 32 字以內的詞，一次呼叫最多嘗試 256 次；剩餘次數不夠的詞保留原樣。切法取決於表裡的資料，同一個輸入在別的資料庫可能改寫成不同結果。
 - 兩個參數的版本會讀取指定的表，所以 SQLite 不允許在 trigger 和 view 裡使用它。表名會被當成一個識別字加引號：請傳表名，不要傳 `schema.table`。
 
+## 排序：`cjk_rank_query()`
+
+`cjk_query()` 是用來找字的：每個詞都必須出現，中日韓詞必須照原樣出現。如果要依照和問題的相關程度排序文件，請用 `cjk_rank_query()`。它把預設 `cjk` 表為這段文字索引的詞項用 OR 串起來：bigram、`unicode61` 的單字，以及每個中日韓連續字串（run）的第一個字；表本來就把這個字單獨索引。再依 `rank`（bm25）排序：
+
+```sql
+SELECT cjk_rank_query('魚池鄉的紅茶');
+-- "魚" OR "魚池" OR "池鄉" OR "鄉的" OR "的紅" OR "紅茶"
+SELECT cjk_rank_query('魚池鄉的紅茶', 'edge');
+-- 同上，再加上 run 的最後一個字 "茶"
+SELECT rowid FROM t WHERE t MATCH cjk_rank_query(:q) ORDER BY rank LIMIT 20;
+```
+
+| | `cjk_query()` | `cjk_rank_query()` |
+|---|---|---|
+| 用途 | 搜尋框：找這段文字 | 問句：依相關程度排序 |
+| 詞 | AND；中日韓詞是一個 phrase | OR；每個 bigram 和邊緣字各是一個詞項 |
+| 結果包含 | 每個詞 | 至少一個詞項 |
+
+在 [cjk-fts-bench](https://github.com/Ray0907/cjk-fts-bench) 上量測（MIRACL train 查詢，沒有參與任何設計決定；每種語言 100,000 段文字）：和在同一張表上只 OR bigram 相比，`'first'` 讓 nDCG@10 提高 0.033（中文）、0.021（日文）、0.019（韓文），95% 信賴區間都不含零。這接近、但不等於在應用層加第一個字（`app_bigram_first`）：低 0.005 到 0.008，差距小但統計上顯著，原因是表把每個 run 的最後一個字也索引成同一個詞項。`'edge'` 重現了應用層加首尾兩字的做法（`app_bigram_edge`）：868 個韓文查詢全部相同，中文差 0.0001 以內，日文差 0.006 以內。這些數字只來自一個保留的資料切分；在第二個切分確認之前，預設是 `'first'`。
+
+代價在查詢時間，不在索引大小：索引完全不變。單字的 posting list 很長。每個問句的平均詞項數，只有 bigram → `'first'` → `'edge'`：8.8 → 9.9 → 10.9（中文）、14.4 → 15.9 → 17.3（日文）、12.2 → 16.7 → 21.0（韓文）。中位數查詢時間相對於只有 bigram 的查詢（同一台機器跑一次）：`'first'` 為 ×1.7、×1.2、×5.0，`'edge'` 為 ×2.5、×1.7、×9.6。
+
+- 適用於預設 `unigram 0` 的表。這個函式不接收表，看不到表的選項。在 `unigram 1` 的表裡每個字都有索引，單字詞項會比對到每個出現位置，而不只是 run 的邊緣；這種排序沒有量測過。
+- 文字用不帶 `unicode61` 選項的 `cjk` 切詞。如果表有 `remove_diacritics 0` 之類的選項，拉丁字詞項的正規化可能不同；那個詞項就比對得比較少，但不會出錯。
+- run 的定義和 tokenizer 相同：・ 和 ー 屬於 run，、。「」！ 等全形標點會結束 run。benchmark 呼叫前先移除了標點。
+- 最多 128 個不重複詞項，依第一次出現的順序；後面的文字不會讀取。重複的詞項只列一次，因為 bm25 會把重複的算兩次。
+- `NULL` 回傳 `NULL`，沒有詞項的文字回傳 `""`（什麼都不中），`'first'`、`'edge'` 以外的 mode 是錯誤。
+- 每個詞項都加上雙引號，輸入裡的運算子和引號仍然只是文字。函式不讀任何表，所以可以用在 trigger 和 view 裡。
+
 ## 編譯
 
 ```sh
@@ -155,7 +184,7 @@ amalgamation（`sqlite3.c`）要加 `-DSQLITE_ENABLE_FTS5`，否則載入時會�
 
 | | 做法 | 相依 |
 |---|---|---|
-| `cjk`（本專案） | 字元 bigram，其餘交給 unicode61 | 無，432 行 C |
+| `cjk`（本專案） | 字元 bigram，其餘交給 unicode61 | 無，551 行 C |
 | [wangfenjin/simple](https://github.com/wangfenjin/simple) | 逐字，可選 jieba、拼音 | C++、jieba 字典 |
 | [streetwriters/sqlite-better-trigram](https://github.com/streetwriters/sqlite-better-trigram) | trigram 加短詞 fallback | TypeScript |
 | [cwt/fts5-icu-tokenizer](https://github.com/cwt/fts5-icu-tokenizer) | ICU word break iterator | ICU 資料 |

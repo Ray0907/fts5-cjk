@@ -50,6 +50,35 @@ SELECT * FROM t WHERE t MATCH cjk_query('南投魚池', 't');
 - `cjk_query(text, 'table')` also consults the table. A CJK word that has no hits as one phrase is split where the pieces have the most hits: first into two pieces, then, for words of up to 12 characters, into three. If no split has hits, the word is kept. Every probe is a query, so only words of up to 32 characters are split, and one call runs at most 256 probes; a word that does not fit the remaining budget is kept whole. The split depends on what the table contains, so the same input can be rewritten differently in another database.
 - The two-argument form reads the table it is given, so SQLite refuses it inside triggers and views. The name is quoted as one identifier: pass a table name, not `schema.table`.
 
+## Ranking: `cjk_rank_query()`
+
+`cjk_query()` finds text: every word must occur, and a CJK word must occur as written. To rank documents by relevance to a question, use `cjk_rank_query()`. It ORs the terms a default `cjk` table indexes for the text: the bigrams, the `unicode61` words, and the first character of each CJK run, which the table already indexes on its own. Order by `rank` (bm25):
+
+```sql
+SELECT cjk_rank_query('魚池鄉的紅茶');
+-- "魚" OR "魚池" OR "池鄉" OR "鄉的" OR "的紅" OR "紅茶"
+SELECT cjk_rank_query('魚池鄉的紅茶', 'edge');
+-- the same, plus "茶", the run's last character
+SELECT rowid FROM t WHERE t MATCH cjk_rank_query(:q) ORDER BY rank LIMIT 20;
+```
+
+| | `cjk_query()` | `cjk_rank_query()` |
+|---|---|---|
+| use it for | a search box: find this text | a question: rank by relevance |
+| words | ANDed; a CJK word is a phrase | ORed; each bigram and edge character is a term |
+| a result contains | every word | at least one term |
+
+Measured on [cjk-fts-bench](https://github.com/Ray0907/cjk-fts-bench) (MIRACL train queries held out from every design choice, 100,000 passages per language): compared with ORing the bigrams alone on the same table, `'first'` raises nDCG@10 by 0.033 (zh), 0.021 (ja) and 0.019 (ko), each with a 95% interval excluding zero. That is close to, not equal to, adding the first character at the application level (`app_bigram_first`): 0.005 to 0.008 lower, a small but statistically significant gap, because the table also indexes each run's last character as the same term. `'edge'` reproduces the application-level first-and-last variant (`app_bigram_edge`): identical on all 868 Korean queries, within 0.0001 in Chinese and 0.006 in Japanese. These numbers come from one held-out split; `'first'` is the default until a second split confirms it.
+
+The cost is query time, not index size: the index is unchanged. Single characters have long posting lists. Mean terms per question, bigrams only → `'first'` → `'edge'`: 8.8 → 9.9 → 10.9 (zh), 14.4 → 15.9 → 17.3 (ja), 12.2 → 16.7 → 21.0 (ko). Median query time against the bigram-only query, one run on one machine: ×1.7, ×1.2, ×5.0 with `'first'` and ×2.5, ×1.7, ×9.6 with `'edge'`.
+
+- For tables with the default `unigram 0`. The function takes no table and cannot see its options. In a `unigram 1` table every character is indexed, so a one-character term matches every occurrence rather than run edges; that ranking has not been measured.
+- The text is tokenized with plain `cjk`, without `unicode61` options. On a table with options such as `remove_diacritics 0`, Latin terms can be folded differently; such a term then matches less, and is never an error.
+- A run is what the tokenizer calls a run: ・ and ー belong to it, and full-width punctuation such as 、。「」！ ends it. The benchmark removed punctuation before calling it.
+- At most 128 distinct terms, in the order they first occur; the rest of the text is not read. A repeated term is listed once, since bm25 would count it twice.
+- `NULL` gives `NULL`, text with no terms gives `""` (matches nothing), and a mode other than `'first'` or `'edge'` is an error.
+- Each term is double-quoted, so operators and quotes in the input stay text. The function reads no table, so it can be used in triggers and views.
+
 ## Build
 
 ```sh
@@ -155,7 +184,7 @@ Korean is written with spaces, so `unicode61` does find the bare word. It misses
 
 | | approach | dependencies |
 |---|---|---|
-| `cjk` (this) | character bigrams, unicode61 for the rest | none, 432 lines of C |
+| `cjk` (this) | character bigrams, unicode61 for the rest | none, 551 lines of C |
 | [wangfenjin/simple](https://github.com/wangfenjin/simple) | per character, optional jieba, pinyin | C++, jieba dictionary |
 | [streetwriters/sqlite-better-trigram](https://github.com/streetwriters/sqlite-better-trigram) | trigram with a fallback for short words | TypeScript |
 | [cwt/fts5-icu-tokenizer](https://github.com/cwt/fts5-icu-tokenizer) | ICU word break iterator | ICU data |

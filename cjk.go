@@ -1,6 +1,7 @@
-// Package cjk statically links the cjk FTS5 tokenizer and cjk_query() into
-// every SQLite connection opened by a cgo driver such as mattn/go-sqlite3
-// (build with -tags sqlite_fts5). Import it for its side effect:
+// Package cjk statically links the cjk FTS5 tokenizer, cjk_query() and
+// cjk_rank_query() into every SQLite connection opened by a cgo driver such
+// as mattn/go-sqlite3 (build with -tags sqlite_fts5). Import it for its side
+// effect:
 //
 //	import _ "github.com/Ray0907/fts5-cjk"
 package cjk
