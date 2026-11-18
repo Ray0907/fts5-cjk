@@ -68,7 +68,7 @@ SELECT rowid FROM t WHERE t MATCH cjk_rank_query(:q) ORDER BY rank LIMIT 20;
 | 詞 | AND；中日韓詞是一個 phrase | OR；每個 bigram 和邊緣字各是一個詞項 |
 | 結果包含 | 每個詞 | 至少一個詞項 |
 
-在 [cjk-fts-bench](https://github.com/Ray0907/cjk-fts-bench) 上量測（MIRACL train 查詢，沒有參與任何設計決定；每種語言 100,000 段文字）：和在同一張表上只 OR bigram 相比，`'first'` 讓 nDCG@10 提高 0.033（中文）、0.021（日文）、0.019（韓文），95% 信賴區間都不含零。這接近、但不等於在應用層加第一個字（`app_bigram_first`）：低 0.005 到 0.008，差距小但統計上顯著，原因是表把每個 run 的最後一個字也索引成同一個詞項。`'edge'` 重現了應用層加首尾兩字的做法（`app_bigram_edge`）：868 個韓文查詢全部相同，中文差 0.0001 以內，日文差 0.006 以內。這些數字只來自一個保留的資料切分；在第二個切分確認之前，預設是 `'first'`。
+在 [cjk-fts-bench](https://github.com/Ray0907/cjk-fts-bench) 上用 benchmark 裡與這個函式等價的 Python 規則量測，資料是 MIRACL train 查詢（每種語言 100,000 段文字）。這些查詢沒有用來選擇排序規則或 mode；下面的 128 個詞項上限則是依它們的長度定的。在同一張表上，`cjk_rank_query()` 回傳的前 100 筆和那個 Python 規則相同：`'first'` 模式 5,657 個查詢中有 5,655 個相同，`'edge'` 模式全部相同（[驗證](https://github.com/Ray0907/cjk-fts-bench/blob/main/audit/rank_query_validation/summary.md)）。和在同一張表上只 OR bigram 相比，`'first'` 讓 nDCG@10 提高 0.033（中文）、0.021（日文）、0.019（韓文），95% 信賴區間都不含零（[統計](https://github.com/Ray0907/cjk-fts-bench/blob/main/results/stats.md)）。和在應用層加第一個字（`app_bigram_first`）相比，中文和日文相差在 ±0.01 以內（低 0.005 和 0.007），韓文則不在，低 0.008。可能的原因是表把每個 run 的最後一個字也索引成同一個詞項，但這點沒有驗證。`'edge'` 和應用層加首尾兩字的做法（`app_bigram_edge`）在 868 個韓文查詢上完全相同，中文上分不出差別（低 0.0001），日文低 0.006，這個差距顯著，出在文件端，原因尚未查明。這些數字只來自一個保留的資料切分；在第二個切分確認之前，預設是 `'first'`。
 
 代價在查詢時間，不在索引大小：索引完全不變。單字的 posting list 很長。每個問句的平均詞項數，只有 bigram → `'first'` → `'edge'`：8.8 → 9.9 → 10.9（中文）、14.4 → 15.9 → 17.3（日文）、12.2 → 16.7 → 21.0（韓文）。中位數查詢時間相對於只有 bigram 的查詢（同一台機器跑一次）：`'first'` 為 ×1.7、×1.2、×5.0，`'edge'` 為 ×2.5、×1.7、×9.6。
 
