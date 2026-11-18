@@ -205,6 +205,9 @@ NULL|NULL|""|""
 1
 # R15 deterministic and innocuous: usable in a view
 "南" OR "南投" OR "投魚" OR "魚池"
+# R17 the cap at its boundary: 128 distinct terms are kept, the 129th is not, in both modes
+first|128|1|128|1|1|1|128| OR "東" OR "東京"
+edge|128|1|128|1|1|1|128| OR "東" OR "東京"
 # Q3 unknown table is an error
 cjk_query: no such table: no_such_table
 # R16 invalid mode is an error, not a default

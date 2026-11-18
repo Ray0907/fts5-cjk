@@ -155,6 +155,18 @@ SELECT count(*) FROM u WHERE rowid = 1 AND u MATCH cjk_rank_query('紅豆');
 SELECT '# R15 deterministic and innocuous: usable in a view';
 CREATE VIEW rv AS SELECT cjk_rank_query('南投魚池') AS q;
 SELECT q FROM rv;
+SELECT '# R17 the cap at its boundary: 128 distinct terms are kept, the 129th is not, in both modes';
+WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 129),
+  w AS (SELECT (SELECT group_concat('w' || i, ' ') FROM n WHERE i <= 128) AS x128,
+               (SELECT group_concat('w' || i, ' ') FROM n) AS x129,
+               (SELECT group_concat('w' || i, ' ') FROM n WHERE i <= 126) AS x126),
+  q AS (SELECT m, cjk_rank_query(x128, m) AS q128, cjk_rank_query(x129, m) AS q129,
+               cjk_rank_query(x128 || ' w1 w2 w128', m) AS qrep, cjk_rank_query(x126 || ' 東京', m) AS qcjk
+          FROM w, (SELECT 'first' AS m UNION ALL SELECT 'edge'))
+SELECT m, (length(q128) - length(replace(q128, ' OR ', ''))) / 4 + 1, q128 LIKE '"w1" OR %' AND q128 LIKE '% OR "w128"',
+       (length(q129) - length(replace(q129, ' OR ', ''))) / 4 + 1, q129 = q128, instr(q129, '"w129"') = 0, qrep = q128,
+       (length(qcjk) - length(replace(qcjk, ' OR ', ''))) / 4 + 1, substr(qcjk, instr(qcjk, '"w126"') + 6)
+  FROM q;
 SELECT '# Q3 unknown table is an error';
 .bail off
 SELECT cjk_query('南投魚池', 'no_such_table');
