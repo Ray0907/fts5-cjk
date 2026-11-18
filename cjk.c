@@ -407,7 +407,8 @@ static void cjkQueryFunc(sqlite3_context *pCtx, int argc, sqlite3_value **argv){
 ** keeps each run's first character and leaves out its last; 'edge' keeps both.
 ** Each distinct term is quoted once (bm25 sums over phrases, so a repeat would
 ** count twice) and at most RANK_MAX_TERMS terms are kept, in the order they
-** first occur; the rest of the text is not read. */
+** first occur; the rest of the text is not read. The cap bounds the number of
+** terms, not their length: one long word is one term as long as the word. */
 #define RANK_MAX_TERMS 128
 
 typedef struct RankCtx {

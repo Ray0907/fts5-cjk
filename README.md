@@ -75,7 +75,8 @@ The cost is query time, not index size: the index is unchanged. Single character
 - For tables with the default `unigram 0`. The function takes no table and cannot see its options. In a `unigram 1` table every character is indexed, so a one-character term matches every occurrence rather than run edges; that ranking has not been measured.
 - The text is tokenized with plain `cjk`, without `unicode61` options. On a table with options such as `remove_diacritics 0`, Latin terms can be folded differently; such a term then matches less, and is never an error.
 - A run is what the tokenizer calls a run: ・ and ー belong to it, and full-width punctuation such as 、。「」！ ends it. The benchmark removed punctuation before calling it.
-- At most 128 distinct terms, in the order they first occur; the rest of the text is not read. A repeated term is listed once, since bm25 would count it twice.
+- At most 128 distinct terms, in the order they first occur; the rest of the text is not read. A repeated term is listed once, since bm25 would count it twice. The cap counts terms, not bytes: one very long word is still one term, and the query is at least as long as that word.
+- Invalid UTF-8 in the text can come back as invalid UTF-8 in the result, because `unicode61` passes some invalid sequences through unchanged (bytes `F4 90 80 80`, for example). `MATCH` accepts the result, and the same bytes in a document are indexed the same way, but a driver that decodes text strictly, such as Python's `sqlite3`, raises an error when it reads the result.
 - `NULL` gives `NULL`, text with no terms gives `""` (matches nothing), and a mode other than `'first'` or `'edge'` is an error.
 - Each term is double-quoted, so operators and quotes in the input stay text. The function reads no table, so it can be used in triggers and views.
 
