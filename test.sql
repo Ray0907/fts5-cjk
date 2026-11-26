@@ -105,6 +105,13 @@ SELECT cjk_query(x, 't') = '"' || x || '"' FROM (SELECT replace(hex(zeroblob(20)
 SELECT cjk_query('日月潭紅茶產南投縣魚池鄉', 't');
 SELECT cjk_query(x || ' ' || x || ' ' || x || ' 日月潭紅茶產南投縣魚池鄉', 't') LIKE '%" "日月潭紅茶產南投縣魚池鄉"'
   FROM (SELECT replace(hex(zeroblob(6)), '0', '火') AS x);
+SELECT '# Q5 cjk_query composes NFD kana and Hangul jamo';
+SELECT cjk_query(char(0x1112, 0x1161, 0x11AB)), cjk_query(char(0x304B, 0x3099)), cjk_query('ｶﾞ');
+SELECT rowid FROM t WHERE t MATCH cjk_query(char(0x1110, 0x1173, 0x11A8));
+INSERT INTO n(rowid, body) VALUES (4, 'ひらがな');
+SELECT rowid FROM n WHERE n MATCH cjk_query(char(0x304B, 0x3099)) ORDER BY rowid;
+SELECT cjk_query(char(0x1109,0x1165,0x110B,0x116E,0x11AF,0x1109,0x1175,0x1100,0x1161,0x11BC,0x1102,0x1161,0x11B7), 't');
+SELECT rowid FROM t WHERE t MATCH cjk_query(char(0x1109,0x1165,0x110B,0x116E,0x11AF,0x1109,0x1175,0x1100,0x1161,0x11BC,0x1102,0x1161,0x11B7), 't');
 SELECT '# R1 cjk_rank_query: bigrams plus each run''s first character, or both edges';
 SELECT cjk_rank_query('東京大学の研究'); SELECT cjk_rank_query('東京大学の研究', 'edge');
 SELECT cjk_rank_query('東京大学の研究', 'first') = cjk_rank_query('東京大学の研究');

@@ -68,7 +68,7 @@ SELECT rowid FROM t WHERE t MATCH cjk_rank_query(:q) ORDER BY rank LIMIT 20;
 | 詞 | AND；中日韓詞是一個 phrase | OR；每個 bigram 和邊緣字各是一個詞項 |
 | 結果包含 | 每個詞 | 至少一個詞項 |
 
-在 [cjk-fts-bench](https://github.com/Ray0907/cjk-fts-bench) 上用 benchmark 裡與這個函式等價的 Python 規則量測，資料是 MIRACL train 查詢（每種語言 100,000 段文字）。這些查詢沒有用來選擇排序規則或 mode；下面的 128 個詞項上限則是依它們的長度定的。在同一張表上，`cjk_rank_query()` 回傳的前 100 筆和那個 Python 規則相同：`'first'` 模式 5,657 個查詢中有 5,655 個相同，`'edge'` 模式全部相同（[驗證](https://github.com/Ray0907/cjk-fts-bench/blob/main/audit/rank_query_validation/summary.md)）。和在同一張表上只 OR bigram 相比，`'first'` 讓 nDCG@10 提高 0.033（中文）、0.021（日文）、0.019（韓文），95% 信賴區間都不含零（[統計](https://github.com/Ray0907/cjk-fts-bench/blob/main/results/stats.md)）。和在應用層加第一個字（`app_bigram_first`）相比，中文和日文相差在 ±0.01 以內（低 0.005 和 0.007），韓文則不在，低 0.008。可能的原因是表把每個 run 的最後一個字也索引成同一個詞項，但這點沒有驗證。`'edge'` 和應用層加首尾兩字的做法（`app_bigram_edge`）在 868 個韓文查詢上完全相同，中文上分不出差別（低 0.0001），日文低 0.006，這個差距顯著，出在文件端，原因尚未查明。這些數字只來自一個保留的資料切分；在第二個切分確認之前，預設是 `'first'`。
+在 [cjk-fts-bench](https://github.com/Ray0907/cjk-fts-bench) 上用 benchmark 裡與這個函式等價的 Python 規則量測，資料是 MIRACL train 查詢（每種語言 100,000 段文字）。這些查詢沒有用來選擇排序規則或 mode；下面的 128 個詞項上限則是依它們的長度定的。在同一張表上，`cjk_rank_query()` 回傳的前 100 筆和那個 Python 規則相同：`'first'` 模式 5,657 個查詢中有 5,655 個相同，`'edge'` 模式全部相同（[驗證](https://github.com/Ray0907/cjk-fts-bench/blob/main/audit/rank_query_validation/summary.md)）。和在同一張表上只 OR bigram 相比，`'first'` 讓 nDCG@10 提高 0.033（中文）、0.021（日文）、0.019（韓文），95% 信賴區間都不含零（[統計](https://github.com/Ray0907/cjk-fts-bench/blob/main/results/stats.md)）。和在應用層加第一個字（`app_bigram_first`）相比，中文和日文相差在 ±0.01 以內（低 0.005 和 0.007），韓文則不在，低 0.008。可能的原因是表把每個 run 的最後一個字也索引成同一個詞項，但這點沒有驗證。`'edge'` 和應用層加首尾兩字的做法（`app_bigram_edge`）在 868 個韓文查詢上完全相同，中文上分不出差別（低 0.0001），日文低 0.006，這個差距顯著，出在文件端，原因尚未查明。這些數字只來自一個保留的資料切分；在第二個切分確認之前，預設是 `'first'`。同一張表上，`'edge'` 在中文比 `'first'` 高 0.012（p=0.0002），日文（+0.001）和韓文（+0.003）差距在 ±0.01 以內，代價是下面的查詢時間。
 
 代價在查詢時間，不在索引大小：索引完全不變。單字的 posting list 很長。每個問句的平均詞項數，只有 bigram → `'first'` → `'edge'`：8.8 → 9.9 → 10.9（中文）、14.4 → 15.9 → 17.3（日文）、12.2 → 16.7 → 21.0（韓文）。中位數查詢時間相對於只有 bigram 的查詢（同一台機器跑一次）：`'first'` 為 ×1.7、×1.2、×5.0，`'edge'` 為 ×2.5、×1.7、×9.6。
 
@@ -169,7 +169,7 @@ amalgamation（`sqlite3.c`）要加 `-DSQLITE_ENABLE_FTS5`，否則載入時會�
 - 全形 ASCII、半形片假名（含濁音）會摺疊。NFD 文字（帶組合濁點的假名、拆成字母的諺文）會先組合，所以能用 NFC 查詢找到。臺→台、裡→裏、羣→群、峯→峰、綫→線、衞→衛、爲→為、眞→真、敎→教、册→冊、祕→秘、啓→啟、淸→清、靑→青會在索引與查詢時摺疊；不做其他繁簡轉換。
 - 不同版本索引的內容不同，升級後須重建舊索引：`INSERT INTO t(t) VALUES('rebuild')`。
 - 漢字、平假名、片假名、諺文，以及 々〆〇 算 CJK。其他中日韓標點是分隔符。
-- 47,281 條法規的索引大小：`unicode61` 11.7 MB、`cjk` 18.3 MB、`cjk unigram 1` 26.3 MB、`trigram` 27.7 MB。`cjk` 比 `trigram` 小約三分之一。
+- 47,281 條法規的索引大小：`unicode61` 11.7 MB、`cjk` 18.3 MB、`cjk unigram 1` 26.3 MB、`trigram` 27.7 MB。`cjk` 比 `trigram` 小約三分之一。和應用層改寫 bigram（[cjk-fts-bench](https://github.com/Ray0907/cjk-fts-bench)）相比，`cjk` 因為也索引每個 run 的首尾字，純倒排索引大 15–60%，但標準 FTS5 表小 12–35%（若加上應用層表為顯示原文而另外保存的原文副本，共小 38–50%）。
 
 ## 支援的文字
 
@@ -185,11 +185,13 @@ amalgamation（`sqlite3.c`）要加 `-DSQLITE_ENABLE_FTS5`，否則載入時會�
 
 | | 做法 | 相依 |
 |---|---|---|
-| `cjk`（本專案） | 字元 bigram，其餘交給 unicode61 | 無，551 行 C |
+| `cjk`（本專案） | 字元 bigram，其餘交給 unicode61 | 無，570 行 C |
 | [wangfenjin/simple](https://github.com/wangfenjin/simple) | 逐字，可選 jieba、拼音 | C++、jieba 字典 |
-| [streetwriters/sqlite-better-trigram](https://github.com/streetwriters/sqlite-better-trigram) | trigram 加短詞 fallback | TypeScript |
+| [streetwriters/sqlite-better-trigram](https://github.com/streetwriters/sqlite-better-trigram) | 漢字與假名逐字切，其餘（含諺文）為空白分界的 trigram | 無（C；需 SQLite 的 `fts5_unicode2.c`） |
 | [cwt/fts5-icu-tokenizer](https://github.com/cwt/fts5-icu-tokenizer) | ICU word break iterator | ICU 資料 |
 | 內建 `trigram` | 字元 trigram | 無 |
+
+12 種方案的子字串召回率、MIRACL 排序、索引大小與查詢延遲比較見 [cjk-fts-bench](https://github.com/Ray0907/cjk-fts-bench)。
 
 ## 為什麼用 bigram 不用字典
 

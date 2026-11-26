@@ -21,7 +21,10 @@ static-test: cjk.c test/static.c
 	$(CC) -Wall -DSQLITE_CORE -Iinclude -o $@ test/static.c cjk.c $(SQLITE_LIB)
 	./$@
 
+go-test:
+	cd test/go && CGO_LDFLAGS="$(SQLITE_LIB)" go test -v
+
 clean:
 	rm -rf cjk.so cjk.dylib cjk-asan.so cjk-asan.dylib cjk-asan.dylib.dSYM asan-test asan-test.dSYM static-test
 
-.PHONY: test asan-test static-test clean
+.PHONY: test asan-test static-test go-test clean

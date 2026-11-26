@@ -22,6 +22,12 @@ jobs:
         run: make asan-test
       - name: static link
         run: make static-test
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: go module
+        run: make go-test
   windows:
     runs-on: windows-latest
     steps:

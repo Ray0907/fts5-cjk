@@ -68,7 +68,7 @@ SELECT rowid FROM t WHERE t MATCH cjk_rank_query(:q) ORDER BY rank LIMIT 20;
 | 단어 | AND. CJK 단어는 하나의 구 | OR. bigram과 끝 글자가 각각 하나의 항목 |
 | 결과에 포함되는 것 | 모든 단어 | 적어도 하나의 항목 |
 
-[cjk-fts-bench](https://github.com/Ray0907/cjk-fts-bench)에서 이 함수와 동등한 벤치마크의 Python 규칙으로, MIRACL train 쿼리(언어마다 100,000 단락)에서 측정했습니다. 이 쿼리는 순위 규칙이나 mode를 고르는 데 쓰지 않았지만, 아래의 128개 항목 상한은 그 길이를 보고 정했습니다. 같은 테이블에서 `cjk_rank_query()`가 반환하는 상위 100개는 그 Python 규칙과 같으며, `'first'` 모드에서는 5,657개 쿼리 중 5,655개, `'edge'` 모드에서는 모두 같았습니다([검증](https://github.com/Ray0907/cjk-fts-bench/blob/main/audit/rank_query_validation/summary.md)). 같은 테이블에서 bigram만 OR로 이은 경우와 비교해 `'first'`는 nDCG@10을 0.033(중국어), 0.021(일본어), 0.019(한국어) 올리며, 모두 95% 신뢰구간이 0을 포함하지 않습니다([통계](https://github.com/Ray0907/cjk-fts-bench/blob/main/results/stats.md)). 애플리케이션 수준에서 첫 글자를 더하는 방식(`app_bigram_first`)과 비교하면 중국어와 일본어는 ±0.01 이내(0.005와 0.007 낮음)이지만, 한국어는 0.008 낮아 ±0.01 안에 들지 않습니다. 테이블이 각 run의 마지막 글자도 같은 항목으로 색인하기 때문일 가능성이 크지만 검증하지는 않았습니다. `'edge'`는 애플리케이션 수준에서 첫 글자와 마지막 글자를 더하는 방식(`app_bigram_edge`)과 한국어 쿼리 868개 모두에서 같고, 중국어에서는 구별되지 않으며(0.0001 낮음), 일본어에서는 0.006 낮습니다. 이 차이는 유의하며 문서 쪽에 있다는 것까지는 확인했지만 원인은 밝히지 못했습니다. 이 수치는 held-out 분할 하나에서만 나온 것입니다. 두 번째 분할에서 확인될 때까지 기본값은 `'first'`입니다.
+[cjk-fts-bench](https://github.com/Ray0907/cjk-fts-bench)에서 이 함수와 동등한 벤치마크의 Python 규칙으로, MIRACL train 쿼리(언어마다 100,000 단락)에서 측정했습니다. 이 쿼리는 순위 규칙이나 mode를 고르는 데 쓰지 않았지만, 아래의 128개 항목 상한은 그 길이를 보고 정했습니다. 같은 테이블에서 `cjk_rank_query()`가 반환하는 상위 100개는 그 Python 규칙과 같으며, `'first'` 모드에서는 5,657개 쿼리 중 5,655개, `'edge'` 모드에서는 모두 같았습니다([검증](https://github.com/Ray0907/cjk-fts-bench/blob/main/audit/rank_query_validation/summary.md)). 같은 테이블에서 bigram만 OR로 이은 경우와 비교해 `'first'`는 nDCG@10을 0.033(중국어), 0.021(일본어), 0.019(한국어) 올리며, 모두 95% 신뢰구간이 0을 포함하지 않습니다([통계](https://github.com/Ray0907/cjk-fts-bench/blob/main/results/stats.md)). 애플리케이션 수준에서 첫 글자를 더하는 방식(`app_bigram_first`)과 비교하면 중국어와 일본어는 ±0.01 이내(0.005와 0.007 낮음)이지만, 한국어는 0.008 낮아 ±0.01 안에 들지 않습니다. 테이블이 각 run의 마지막 글자도 같은 항목으로 색인하기 때문일 가능성이 크지만 검증하지는 않았습니다. `'edge'`는 애플리케이션 수준에서 첫 글자와 마지막 글자를 더하는 방식(`app_bigram_edge`)과 한국어 쿼리 868개 모두에서 같고, 중국어에서는 구별되지 않으며(0.0001 낮음), 일본어에서는 0.006 낮습니다. 이 차이는 유의하며 문서 쪽에 있다는 것까지는 확인했지만 원인은 밝히지 못했습니다. 이 수치는 held-out 분할 하나에서만 나온 것입니다. 두 번째 분할에서 확인될 때까지 기본값은 `'first'`입니다. 같은 테이블에서 `'edge'`는 중국어에서 `'first'`보다 0.012 높고(p=0.0002), 일본어(+0.001)와 한국어(+0.003)에서는 ±0.01 이내이지만 아래의 쿼리 시간이 늘어납니다.
 
 비용은 쿼리 시간이고 색인 크기가 아닙니다. 색인은 바뀌지 않습니다. 한 글자 항목은 포스팅 목록이 깁니다. 질문당 평균 항목 수(bigram만 → `'first'` → `'edge'`): 8.8 → 9.9 → 10.9(중국어), 14.4 → 15.9 → 17.3(일본어), 12.2 → 16.7 → 21.0(한국어). bigram만 쓴 쿼리 대비 중앙값 쿼리 시간(한 대의 기기에서 한 번 실행): `'first'`는 ×1.7, ×1.2, ×5.0, `'edge'`는 ×2.5, ×1.7, ×9.6.
 
@@ -163,7 +163,7 @@ amalgamation(`sqlite3.c`)에는 `-DSQLITE_ENABLE_FTS5`가 필요합니다. 없�
 - 전각 ASCII와 반각 가타카나(탁점·반탁점 포함), 그리고 臺→台, 裡→裏, 羣→群, 峯→峰, 綫→線, 衞→衛, 爲→為, 眞→真, 敎→教, 册→冊, 祕→秘, 啓→啟, 淸→清, 靑→青을 색인과 검색 시 정규화합니다. 그 외의 번체·간체 변환은 하지 않습니다. NFD 텍스트(결합용 탁점이 붙은 가나, 자모로 풀어 쓴 한글)는 합성하므로 NFC 검색어로 찾을 수 있습니다.
 - 버전마다 색인하는 내용이 달라지므로 업그레이드 후 기존 인덱스를 다시 빌드하세요: `INSERT INTO t(t) VALUES('rebuild')`.
 - 한글, 한자, 히라가나, 가타카나, 그리고 々〆〇을 CJK로 봅니다. 그 밖의 CJK 문장부호는 구분자입니다.
-- 법령 47,281 조문의 인덱스 크기: `unicode61` 11.7 MB, `cjk` 18.3 MB, `cjk unigram 1` 26.3 MB, `trigram` 27.7 MB. `cjk`는 `trigram`보다 약 3분의 1 작습니다.
+- 법령 47,281 조문의 인덱스 크기: `unicode61` 11.7 MB, `cjk` 18.3 MB, `cjk unigram 1` 26.3 MB, `trigram` 27.7 MB. `cjk`는 `trigram`보다 약 3분의 1 작습니다. 애플리케이션 수준의 bigram 변환([cjk-fts-bench](https://github.com/Ray0907/cjk-fts-bench))과 비교하면 `cjk`는 각 run의 첫·끝 글자도 색인하므로 역색인만 보면 15–60% 크지만, 표준 FTS5 테이블은 12–35% 작습니다(결과 표시를 위해 애플리케이션 테이블이 따로 두는 원문 사본까지 합치면 38–50% 작음).
 
 ## 지원 문자
 
@@ -179,11 +179,13 @@ amalgamation(`sqlite3.c`)에는 `-DSQLITE_ENABLE_FTS5`가 필요합니다. 없�
 
 | | 방식 | 의존성 |
 |---|---|---|
-| `cjk`(이 프로젝트) | 글자 bigram, 나머지는 unicode61 | 없음, C 551줄 |
+| `cjk`(이 프로젝트) | 글자 bigram, 나머지는 unicode61 | 없음, C 570줄 |
 | [wangfenjin/simple](https://github.com/wangfenjin/simple) | 글자 단위, 선택적으로 jieba·병음 | C++, jieba 사전 |
-| [streetwriters/sqlite-better-trigram](https://github.com/streetwriters/sqlite-better-trigram) | 짧은 단어 폴백이 있는 trigram | TypeScript |
+| [streetwriters/sqlite-better-trigram](https://github.com/streetwriters/sqlite-better-trigram) | 한자와 가나는 글자 단위, 나머지(한글 포함)는 공백 기준 trigram | 없음(C, SQLite의 `fts5_unicode2.c` 필요) |
 | [cwt/fts5-icu-tokenizer](https://github.com/cwt/fts5-icu-tokenizer) | ICU word break iterator | ICU 데이터 |
 | 내장 `trigram` | 글자 trigram | 없음 |
+
+12가지 구성의 부분 문자열 재현율, MIRACL 순위, 인덱스 크기, 쿼리 지연 비교는 [cjk-fts-bench](https://github.com/Ray0907/cjk-fts-bench)에서 볼 수 있습니다.
 
 ## 왜 사전 대신 bigram인가
 

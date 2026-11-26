@@ -26,7 +26,6 @@
 #include "sqlite3ext.h"
 SQLITE_EXTENSION_INIT1
 #include <string.h>
-#include <stdlib.h>
 
 typedef struct CjkTokenizer {
   fts5_tokenizer parent;   /* unicode61 */
@@ -90,7 +89,8 @@ static int parentCb(void *p, int tflags, const char *pTok, int nTok, int iStart,
   }
   if( i + 2 >= nTok )
     return emit(ctx, tflags, pTok, nTok, ctx->base + iStart, ctx->base + iEnd);
-  char *z = sqlite3_malloc(nTok);
+  char sbuf[128];
+  char *z = nTok <= (int)sizeof(sbuf) ? sbuf : sqlite3_malloc(nTok);
   if( !z ) return SQLITE_NOMEM;
   int n = 0;
   for(i = 0; i < nTok; ){
@@ -105,7 +105,7 @@ static int parentCb(void *p, int tflags, const char *pTok, int nTok, int iStart,
     i += len;
   }
   int rc = emit(ctx, tflags, z, n, ctx->base + iStart, ctx->base + iEnd);
-  sqlite3_free(z);
+  if( z != sbuf ) sqlite3_free(z);
   return rc;
 }
 
@@ -114,8 +114,8 @@ static int cjkCreate(void *pUser, const char **azArg, int nArg, Fts5Tokenizer **
   CjkTokenizer *p = sqlite3_malloc(sizeof(*p));
   if( !p ) return SQLITE_NOMEM;
   memset(p, 0, sizeof(*p));
-  const char **parentArgs = sqlite3_malloc64(((sqlite3_uint64)nArg + 1) * sizeof(*parentArgs));
-  if( !parentArgs ){ sqlite3_free(p); return SQLITE_NOMEM; }
+  const char **parentArgs = nArg ? sqlite3_malloc64((sqlite3_uint64)nArg * sizeof(*parentArgs)) : 0;
+  if( nArg && !parentArgs ){ sqlite3_free(p); return SQLITE_NOMEM; }
   int nParent = 0, seen = 0, rc = SQLITE_OK;
   for(int i = 0; i < nArg && rc == SQLITE_OK; i++){
     if( strcmp(azArg[i], "unigram") == 0 ){
@@ -144,24 +144,14 @@ static void cjkDelete(Fts5Tokenizer *pTok){
   sqlite3_free(p);
 }
 
+static void cjkDeleteApp(void *p){
+  cjkDelete((Fts5Tokenizer*)p);
+}
+
 typedef struct Rune {
   unsigned int cp;
   int start, end;           /* offsets in the original input */
 } Rune;
-
-typedef struct Variant { unsigned int from, to; } Variant;
-static const Variant variants[] = {
-  {0x518C, 0x518A}, {0x5553, 0x555F}, {0x5CEF, 0x5CF0},
-  {0x654E, 0x6559}, {0x6DF8, 0x6E05}, {0x7232, 0x70BA},
-  {0x771E, 0x771F}, {0x7955, 0x79D8}, {0x7DAB, 0x7DDA},
-  {0x7FA3, 0x7FA4}, {0x81FA, 0x53F0}, {0x885E, 0x885B},
-  {0x88E1, 0x88CF}, {0x9751, 0x9752}
-};
-
-static int variantCmp(const void *key, const void *entry){
-  unsigned int a = *(const unsigned int*)key, b = ((const Variant*)entry)->from;
-  return (a > b) - (a < b);
-}
 
 static unsigned int fold(unsigned int cp){
   /* U+FF66..FF9F, including the two standalone voiced marks. */
@@ -176,8 +166,17 @@ static unsigned int fold(unsigned int cp){
     0x309B, 0x309C
   };
   if( cp >= 0xFF66 && cp <= 0xFF9F ) return kana[cp - 0xFF66];
-  const Variant *v = bsearch(&cp, variants, sizeof(variants)/sizeof(*variants), sizeof(*variants), variantCmp);
-  return v ? v->to : cp;
+  if( cp < 0x518C || cp > 0x9751 ) return cp;
+  switch( cp ){
+    case 0x518C: return 0x518A;  case 0x5553: return 0x555F;
+    case 0x5CEF: return 0x5CF0;  case 0x654E: return 0x6559;
+    case 0x6DF8: return 0x6E05;  case 0x7232: return 0x70BA;
+    case 0x771E: return 0x771F;  case 0x7955: return 0x79D8;
+    case 0x7DAB: return 0x7DDA;  case 0x7FA3: return 0x7FA4;
+    case 0x81FA: return 0x53F0;  case 0x885E: return 0x885B;
+    case 0x88E1: return 0x88CF;  case 0x9751: return 0x9752;
+    default: return cp;
+  }
 }
 
 /* The precomposed form of prev followed by c, or 0. Covers voiced-sound marks
@@ -222,7 +221,10 @@ static int utf8Encode(unsigned int cp, char *z){
 ** run-final 茶. A query only needs those edges where another token adjoins the run;
 ** a pure CJK query stays a chain of bigrams. */
 static int emitBigrams(Ctx *ctx, const char *text, int iStart, int iEnd, int unigram, int query){
-  Rune *a = sqlite3_malloc64((sqlite3_uint64)(iEnd - iStart) * sizeof(*a));
+  Rune sbuf[128];
+  int cap = iEnd - iStart;
+  Rune *a = cap <= (int)(sizeof(sbuf)/sizeof(*sbuf))
+      ? sbuf : sqlite3_malloc64((sqlite3_uint64)cap * sizeof(*a));
   if( !a ) return SQLITE_NOMEM;
   int n = 0, rc = SQLITE_OK;
   for(int i = iStart; i < iEnd; ){
@@ -260,7 +262,7 @@ static int emitBigrams(Ctx *ctx, const char *text, int iStart, int iEnd, int uni
       rc = emit(ctx, 0, z, size, a[j].start, a[j].end);
     }
   }
-  sqlite3_free(a);
+  if( a != sbuf ) sqlite3_free(a);
   return rc;
 }
 
@@ -301,35 +303,34 @@ static int spaceLen(const char *z, int n){
 }
 
 /* A lone CJK character becomes a prefix query, which also matches it inside runs. */
-static void appendWord(sqlite3_str *s, const char *z, int n){
-  unsigned int c;
-  int len = utf8Decode((const unsigned char*)z, n, &c);
+static void appendWord(sqlite3_str *s, const char *z, int n, int prefix){
   sqlite3_str_appendchar(s, 1, '"');
   for(int i = 0; i < n; i++){
     if( z[i] == '"' ) sqlite3_str_appendchar(s, 1, '"');
     sqlite3_str_appendchar(s, 1, z[i]);
   }
-  sqlite3_str_appendall(s, len == n && isCJK(c) ? "\"*" : "\"");
+  sqlite3_str_appendall(s, prefix ? "\"*" : "\"");
 }
 
 /* Appends the word whose nc characters start at z + off[k], cut before
 ** characters i and j (i <= j <= nc; a cut at nc is no cut). */
-static void appendPieces(sqlite3_str *s, const char *z, const int *off, int nc, int i, int j){
+static void appendPieces(sqlite3_str *s, const char *z, const int *off, int nc, int cjk, int i, int j){
   int cut[] = { 0, i, j, nc };
   for(int k = 0; k < 3; k++){
-    if( cut[k] == cut[k+1] ) continue;
+    int len = cut[k+1] - cut[k];
+    if( !len ) continue;
     if( k ) sqlite3_str_appendchar(s, 1, ' ');
-    appendWord(s, z + off[cut[k]], off[cut[k+1]] - off[cut[k]]);
+    appendWord(s, z + off[cut[k]], off[cut[k+1]] - off[cut[k]], cjk && len == 1);
   }
 }
 
-static sqlite3_int64 hits(sqlite3_stmt *pStmt, const char *z, const int *off, int nc, int i, int j, int *pRc){
+static sqlite3_int64 hits(sqlite3_stmt *pStmt, int countCol, const char *z, const int *off, int nc, int cjk, int i, int j, int *pRc){
   sqlite3_str *s = sqlite3_str_new(0);
-  appendPieces(s, z, off, nc, i, j);
+  appendPieces(s, z, off, nc, cjk, i, j);
   char *q = sqlite3_str_finish(s);
   if( !q ){ *pRc = SQLITE_NOMEM; return 0; }
   sqlite3_bind_text(pStmt, 1, q, -1, sqlite3_free);
-  sqlite3_int64 n = sqlite3_step(pStmt) == SQLITE_ROW ? sqlite3_column_int64(pStmt, 0) : 0;
+  sqlite3_int64 n = sqlite3_step(pStmt) == SQLITE_ROW ? (countCol ? sqlite3_column_int64(pStmt, 0) : 1) : 0;
   *pRc = sqlite3_reset(pStmt);
   return n;
 }
@@ -344,46 +345,61 @@ static void cjkQueryFunc(sqlite3_context *pCtx, int argc, sqlite3_value **argv){
   int n = sqlite3_value_bytes(argv[0]), rc = SQLITE_OK;
   if( !z ) return;
   sqlite3 *db = sqlite3_context_db_handle(pCtx);
-  sqlite3_stmt *pStmt = 0;
+  sqlite3_stmt *pAny = 0, *pCnt = 0;
+  const char *zTab = 0;
   if( argc == 2 ){
-    const char *zTab = (const char*)sqlite3_value_text(argv[1]);
-    char *zSql = sqlite3_mprintf("SELECT count(*) FROM \"%w\" WHERE \"%w\" MATCH ?1", zTab, zTab);
-    rc = zSql ? sqlite3_prepare_v2(db, zSql, -1, &pStmt, 0) : SQLITE_NOMEM;
+    zTab = (const char*)sqlite3_value_text(argv[1]);
+    char *zSql = sqlite3_mprintf("SELECT 1 FROM \"%w\" WHERE \"%w\" MATCH ?1 LIMIT 1", zTab, zTab);
+    rc = zSql ? sqlite3_prepare_v2(db, zSql, -1, &pAny, 0) : SQLITE_NOMEM;
     sqlite3_free(zSql);
   }
-  int *off = sqlite3_malloc64(((sqlite3_uint64)n + 1) * sizeof(*off));
+  int sOff[128];
+  int *off = n < (int)(sizeof(sOff)/sizeof(*sOff))
+      ? sOff : sqlite3_malloc64(((sqlite3_uint64)n + 1) * sizeof(*off));
   if( !off && rc == SQLITE_OK ) rc = SQLITE_NOMEM;
   sqlite3_str *out = sqlite3_str_new(db);
   int budget = 256;
   for(int i = 0; i < n && rc == SQLITE_OK; ){
     if( spaceLen(z + i, n - i) ){ i += spaceLen(z + i, n - i); continue; }
     int nc = 0, cjk = 1;
+    unsigned int prev = 0;
     while( i < n && !spaceLen(z + i, n - i) ){
-      unsigned int c;
-      off[nc++] = i;
+      unsigned int c, combined;
+      int start = i;
       i += utf8Decode((const unsigned char*)z + i, n - i, &c);
+      if( nc && cjk && (combined = compose(prev, c)) != 0 ){
+        prev = combined;
+        continue;
+      }
+      off[nc++] = start;
       cjk &= isCJK(c);
+      prev = fold(c);
     }
     off[nc] = i;
     int bi = nc, bj = nc;
     /* Every probe is a MATCH query, so a pasted wall of text must not fan out:
     ** a word is searched only if its worst case fits the call's probe budget. */
     int cost = 1 + (nc - 1) + (nc <= 12 ? (nc - 1)*(nc - 2)/2 : 0);
-    int search = pStmt && cjk && nc > 1 && nc <= 32 && cost <= budget;
+    int search = pAny && cjk && nc > 1 && nc <= 32 && cost <= budget;
     if( search ) budget -= cost;
-    if( search && hits(pStmt, z, off, nc, nc, nc, &rc) == 0 ){
+    if( search && hits(pAny, 0, z, off, nc, cjk, nc, nc, &rc) == 0 && rc == SQLITE_OK ){
+      if( !pCnt ){
+        char *zSql = sqlite3_mprintf("SELECT count(*) FROM \"%w\" WHERE \"%w\" MATCH ?1", zTab, zTab);
+        rc = zSql ? sqlite3_prepare_v2(db, zSql, -1, &pCnt, 0) : SQLITE_NOMEM;
+        sqlite3_free(zSql);
+      }
       sqlite3_int64 best = 0, h;
       for(int a = 1; a < nc && rc == SQLITE_OK; a++){
-        if( (h = hits(pStmt, z, off, nc, a, nc, &rc)) > best ){ best = h; bi = a; }
+        if( (h = hits(pCnt, 1, z, off, nc, cjk, a, nc, &rc)) > best ){ best = h; bi = a; }
       }
       for(int a = 1; !best && nc <= 12 && a < nc; a++){
         for(int b = a + 1; b < nc && rc == SQLITE_OK; b++){
-          if( (h = hits(pStmt, z, off, nc, a, b, &rc)) > best ){ best = h; bi = a; bj = b; }
+          if( (h = hits(pCnt, 1, z, off, nc, cjk, a, b, &rc)) > best ){ best = h; bi = a; bj = b; }
         }
       }
     }
     if( sqlite3_str_length(out) ) sqlite3_str_appendchar(out, 1, ' ');
-    appendPieces(out, z, off, nc, bi, bj);
+    appendPieces(out, z, off, nc, cjk, bi, bj);
   }
   /* MATCH '' is a syntax error; the empty phrase matches nothing. */
   if( !sqlite3_str_length(out) ) sqlite3_str_appendall(out, "\"\"");
@@ -397,8 +413,9 @@ static void cjkQueryFunc(sqlite3_context *pCtx, int argc, sqlite3_value **argv){
     sqlite3_result_text(pCtx, sqlite3_str_value(out), sqlite3_str_length(out), SQLITE_TRANSIENT);
   }
   sqlite3_free(sqlite3_str_finish(out));
-  sqlite3_finalize(pStmt);
-  sqlite3_free(off);
+  sqlite3_finalize(pAny);
+  sqlite3_finalize(pCnt);
+  if( off != sOff ) sqlite3_free(off);
 }
 
 /* cjk_rank_query(text [, mode]) builds an OR query for ranking with bm25 from
@@ -484,29 +501,25 @@ static void cjkRankQueryFunc(sqlite3_context *pCtx, int argc, sqlite3_value **ar
   const char *z = (const char*)sqlite3_value_text(argv[0]);
   int n = sqlite3_value_bytes(argv[0]);
   if( !z ) return;
-  RankCtx *r = sqlite3_malloc(sizeof(*r));
-  if( !r ){ sqlite3_result_error_nomem(pCtx); return; }
-  memset(r, 0, sizeof(*r));
-  r->edge = edge;
-  r->out = sqlite3_str_new(sqlite3_context_db_handle(pCtx));
-  r->terms = sqlite3_str_new(0);
-  Fts5Tokenizer *pTok = 0;
-  int rc = cjkCreate(sqlite3_user_data(pCtx), 0, 0, &pTok);
-  if( rc == SQLITE_OK ) rc = cjkTokenize(pTok, r, FTS5_TOKENIZE_DOCUMENT, z, n, rankCb);
-  if( pTok ) cjkDelete(pTok);
+  RankCtx r;
+  memset(&r, 0, sizeof(r));
+  r.edge = edge;
+  r.out = sqlite3_str_new(sqlite3_context_db_handle(pCtx));
+  r.terms = sqlite3_str_new(0);
+  Fts5Tokenizer *pTok = (Fts5Tokenizer*)sqlite3_user_data(pCtx);
+  int rc = cjkTokenize(pTok, &r, FTS5_TOKENIZE_DOCUMENT, z, n, rankCb);
   if( rc == RANK_FULL ) rc = SQLITE_OK;
   /* MATCH '' is a syntax error; the empty phrase matches nothing. */
-  if( rc == SQLITE_OK && !sqlite3_str_length(r->out) ) sqlite3_str_appendall(r->out, "\"\"");
-  if( rc == SQLITE_NOMEM || sqlite3_str_errcode(r->out) || sqlite3_str_errcode(r->terms) ){
+  if( rc == SQLITE_OK && !sqlite3_str_length(r.out) ) sqlite3_str_appendall(r.out, "\"\"");
+  if( rc == SQLITE_NOMEM || sqlite3_str_errcode(r.out) || sqlite3_str_errcode(r.terms) ){
     sqlite3_result_error_nomem(pCtx);
   }else if( rc != SQLITE_OK ){
     sqlite3_result_error_code(pCtx, rc);
   }else{
-    sqlite3_result_text(pCtx, sqlite3_str_value(r->out), sqlite3_str_length(r->out), SQLITE_TRANSIENT);
+    sqlite3_result_text(pCtx, sqlite3_str_value(r.out), sqlite3_str_length(r.out), SQLITE_TRANSIENT);
   }
-  sqlite3_free(sqlite3_str_finish(r->out));
-  sqlite3_free(sqlite3_str_finish(r->terms));
-  sqlite3_free(r);
+  sqlite3_free(sqlite3_str_finish(r.out));
+  sqlite3_free(sqlite3_str_finish(r.terms));
 }
 
 static fts5_api *fts5ApiFromDb(sqlite3 *db){
@@ -545,8 +558,13 @@ int sqlite3_cjk_init(sqlite3 *db, char **pzErr, const sqlite3_api_routines *pApi
       SQLITE_UTF8 | SQLITE_DIRECTONLY, 0, cjkQueryFunc, 0, 0);
   /* cjk_rank_query reads no table, so it is safe in triggers and views. */
   for(int nArg = 1; nArg <= 2 && rc == SQLITE_OK; nArg++){
-    rc = sqlite3_create_function(db, "cjk_rank_query", nArg,
-        SQLITE_UTF8 | SQLITE_DETERMINISTIC | SQLITE_INNOCUOUS, (void*)pApi, cjkRankQueryFunc, 0, 0);
+    Fts5Tokenizer *pRankTok = 0;
+    rc = cjkCreate(pApi, 0, 0, &pRankTok);
+    if( rc == SQLITE_OK ){
+      rc = sqlite3_create_function_v2(db, "cjk_rank_query", nArg,
+          SQLITE_UTF8 | SQLITE_DETERMINISTIC | SQLITE_INNOCUOUS,
+          pRankTok, cjkRankQueryFunc, 0, 0, cjkDeleteApp);
+    }
   }
   return rc;
 }

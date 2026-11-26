@@ -68,7 +68,7 @@ SELECT rowid FROM t WHERE t MATCH cjk_rank_query(:q) ORDER BY rank LIMIT 20;
 | words | ANDed; a CJK word is a phrase | ORed; each bigram and edge character is a term |
 | a result contains | every word | at least one term |
 
-Measured on [cjk-fts-bench](https://github.com/Ray0907/cjk-fts-bench) with the benchmark's Python equivalent of this function, on MIRACL train queries (100,000 passages per language). Those queries were not used to choose the ranking rule or the modes; the 128-term cap below was sized from their lengths. On the same table, `cjk_rank_query()` returns the same top 100 as that Python rule for 5,655 of 5,657 queries in `'first'` mode and for all of them in `'edge'` mode ([validation](https://github.com/Ray0907/cjk-fts-bench/blob/main/audit/rank_query_validation/summary.md)). Compared with ORing the bigrams alone on the same table, `'first'` raises nDCG@10 by 0.033 (zh), 0.021 (ja) and 0.019 (ko), each with a 95% interval excluding zero ([statistics](https://github.com/Ray0907/cjk-fts-bench/blob/main/results/stats.md)). Against adding the first character at the application level (`app_bigram_first`), it is within ±0.01 in Chinese and Japanese (0.005 and 0.007 lower) but not in Korean, where it is 0.008 lower. The likely reason, not tested, is that the table also indexes each run's last character as the same term. `'edge'` is identical to the application-level first-and-last variant (`app_bigram_edge`) on all 868 Korean queries, indistinguishable from it in Chinese (0.0001 lower) and 0.006 lower in Japanese, a significant gap that lies on the document side and has not been explained. These numbers come from one held-out split; `'first'` is the default until a second split confirms it.
+Measured on [cjk-fts-bench](https://github.com/Ray0907/cjk-fts-bench) with the benchmark's Python equivalent of this function, on MIRACL train queries (100,000 passages per language). Those queries were not used to choose the ranking rule or the modes; the 128-term cap below was sized from their lengths. On the same table, `cjk_rank_query()` returns the same top 100 as that Python rule for 5,655 of 5,657 queries in `'first'` mode and for all of them in `'edge'` mode ([validation](https://github.com/Ray0907/cjk-fts-bench/blob/main/audit/rank_query_validation/summary.md)). Compared with ORing the bigrams alone on the same table, `'first'` raises nDCG@10 by 0.033 (zh), 0.021 (ja) and 0.019 (ko), each with a 95% interval excluding zero ([statistics](https://github.com/Ray0907/cjk-fts-bench/blob/main/results/stats.md)). Against adding the first character at the application level (`app_bigram_first`), it is within ±0.01 in Chinese and Japanese (0.005 and 0.007 lower) but not in Korean, where it is 0.008 lower. The likely reason, not tested, is that the table also indexes each run's last character as the same term. `'edge'` is identical to the application-level first-and-last variant (`app_bigram_edge`) on all 868 Korean queries, indistinguishable from it in Chinese (0.0001 lower) and 0.006 lower in Japanese, a significant gap that lies on the document side and has not been explained. These numbers come from one held-out split; `'first'` is the default until a second split confirms it. On the same table, `'edge'` scores 0.012 higher than `'first'` in Chinese (p=0.0002) and within ±0.01 of it in Japanese (+0.001) and Korean (+0.003), at the query-time cost below.
 
 The cost is query time, not index size: the index is unchanged. Single characters have long posting lists. Mean terms per question, bigrams only → `'first'` → `'edge'`: 8.8 → 9.9 → 10.9 (zh), 14.4 → 15.9 → 17.3 (ja), 12.2 → 16.7 → 21.0 (ko). Median query time against the bigram-only query, one run on one machine: ×1.7, ×1.2, ×5.0 with `'first'` and ×2.5, ×1.7, ×9.6 with `'edge'`.
 
@@ -169,7 +169,7 @@ Korean is written with spaces, so `unicode61` does find the bare word. It misses
 - Full-width ASCII and half-width katakana (including voiced marks) are folded. NFD text, kana with combining voiced marks and Hangul as conjoining jamo, is composed, so it matches NFC queries. The variants 臺→台, 裡→裏, 羣→群, 峯→峰, 綫→線, 衞→衛, 爲→為, 眞→真, 敎→教, 册→冊, 祕→秘, 啓→啟, 淸→清, 靑→青 are folded at index and query time; other traditional/simplified mappings are not.
 - Rebuild existing indexes after upgrading, since what gets indexed changes between versions: `INSERT INTO t(t) VALUES('rebuild')`.
 - Han, hiragana, katakana, hangul and the marks 々〆〇 count as CJK. Other CJK punctuation is a separator.
-- Index size on the 47,281 law articles: `unicode61` 11.7 MB, `cjk` 18.3 MB, `cjk unigram 1` 26.3 MB, `trigram` 27.7 MB. `cjk` is about a third smaller than `trigram`.
+- Index size on the 47,281 law articles: `unicode61` 11.7 MB, `cjk` 18.3 MB, `cjk unigram 1` 26.3 MB, `trigram` 27.7 MB. `cjk` is about a third smaller than `trigram`. Against application-level bigram rewriting ([cjk-fts-bench](https://github.com/Ray0907/cjk-fts-bench)), `cjk`'s inverted index alone is 15–60% larger because it also indexes run-edge characters, while a standard FTS5 table is 12–35% smaller (38–50% counting the separate copy of the original text an application-level table needs to show results).
 
 ## Languages
 
@@ -185,11 +185,13 @@ Korean is written with spaces, so `unicode61` does find the bare word. It misses
 
 | | approach | dependencies |
 |---|---|---|
-| `cjk` (this) | character bigrams, unicode61 for the rest | none, 551 lines of C |
+| `cjk` (this) | character bigrams, unicode61 for the rest | none, 570 lines of C |
 | [wangfenjin/simple](https://github.com/wangfenjin/simple) | per character, optional jieba, pinyin | C++, jieba dictionary |
-| [streetwriters/sqlite-better-trigram](https://github.com/streetwriters/sqlite-better-trigram) | trigram with a fallback for short words | TypeScript |
+| [streetwriters/sqlite-better-trigram](https://github.com/streetwriters/sqlite-better-trigram) | single characters for Han and kana, space-bounded trigrams for the rest (including Hangul) | none (C; SQLite's `fts5_unicode2.c`) |
 | [cwt/fts5-icu-tokenizer](https://github.com/cwt/fts5-icu-tokenizer) | ICU word break iterator | ICU data |
 | built-in `trigram` | character trigrams | none |
+
+See [cjk-fts-bench](https://github.com/Ray0907/cjk-fts-bench) for substring recall, MIRACL ranking, index size and query latency across 12 setups.
 
 ## Why bigrams instead of a dictionary
 

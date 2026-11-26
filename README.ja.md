@@ -68,7 +68,7 @@ SELECT rowid FROM t WHERE t MATCH cjk_rank_query(:q) ORDER BY rank LIMIT 20;
 | 語 | AND。CJK の語は 1 つのフレーズ | OR。bigram と端の文字がそれぞれ 1 つの語 |
 | 結果に含まれるもの | すべての語 | 少なくとも 1 つの語 |
 
-[cjk-fts-bench](https://github.com/Ray0907/cjk-fts-bench) で、この関数と等価なベンチマークの Python ルールを使い、MIRACL train のクエリ（言語ごとに 100,000 パッセージ）で測定しました。これらのクエリはランキング規則や mode の選択には使っていませんが、下記の 128 語の上限はその長さから決めました。同じテーブルで `cjk_rank_query()` が返す上位 100 件はその Python ルールと一致し、`'first'` モードでは 5,657 クエリ中 5,655、`'edge'` モードではすべてで同じでした（[検証](https://github.com/Ray0907/cjk-fts-bench/blob/main/audit/rank_query_validation/summary.md)）。同じテーブルで bigram だけを OR でつないだ場合と比べ、`'first'` は nDCG@10 を 0.033（中国語）、0.021（日本語）、0.019（韓国語）上げ、いずれも 95% 信頼区間はゼロを含みません（[統計](https://github.com/Ray0907/cjk-fts-bench/blob/main/results/stats.md)）。アプリケーション側で先頭文字を加える方式（`app_bigram_first`）との差は、中国語と日本語では ±0.01 以内（0.005 と 0.007 低い）ですが、韓国語では 0.008 低く、±0.01 に収まりません。テーブルが各 run の末尾文字も同じ語として索引していることが理由と考えられますが、検証はしていません。`'edge'` はアプリケーション側で先頭と末尾を加える方式（`app_bigram_edge`）と、韓国語の 868 クエリすべてで同一、中国語では区別できず（0.0001 低い）、日本語では 0.006 低くなります。この差は有意で、文書側にあることまでは分かっていますが、原因は解明していません。この数値は 1 つの held-out 分割だけのものです。2 つ目の分割で確認されるまで、デフォルトは `'first'` です。
+[cjk-fts-bench](https://github.com/Ray0907/cjk-fts-bench) で、この関数と等価なベンチマークの Python ルールを使い、MIRACL train のクエリ（言語ごとに 100,000 パッセージ）で測定しました。これらのクエリはランキング規則や mode の選択には使っていませんが、下記の 128 語の上限はその長さから決めました。同じテーブルで `cjk_rank_query()` が返す上位 100 件はその Python ルールと一致し、`'first'` モードでは 5,657 クエリ中 5,655、`'edge'` モードではすべてで同じでした（[検証](https://github.com/Ray0907/cjk-fts-bench/blob/main/audit/rank_query_validation/summary.md)）。同じテーブルで bigram だけを OR でつないだ場合と比べ、`'first'` は nDCG@10 を 0.033（中国語）、0.021（日本語）、0.019（韓国語）上げ、いずれも 95% 信頼区間はゼロを含みません（[統計](https://github.com/Ray0907/cjk-fts-bench/blob/main/results/stats.md)）。アプリケーション側で先頭文字を加える方式（`app_bigram_first`）との差は、中国語と日本語では ±0.01 以内（0.005 と 0.007 低い）ですが、韓国語では 0.008 低く、±0.01 に収まりません。テーブルが各 run の末尾文字も同じ語として索引していることが理由と考えられますが、検証はしていません。`'edge'` はアプリケーション側で先頭と末尾を加える方式（`app_bigram_edge`）と、韓国語の 868 クエリすべてで同一、中国語では区別できず（0.0001 低い）、日本語では 0.006 低くなります。この差は有意で、文書側にあることまでは分かっていますが、原因は解明していません。この数値は 1 つの held-out 分割だけのものです。2 つ目の分割で確認されるまで、デフォルトは `'first'` です。同じテーブルで、`'edge'` は中国語で `'first'` より 0.012 高く（p=0.0002）、日本語（+0.001）と韓国語（+0.003）では ±0.01 以内ですが、下記のクエリ時間が増えます。
 
 コストはクエリ時間で、索引サイズではありません。索引は変わりません。1 文字の語はポスティングリストが長くなります。質問 1 件あたりの平均語数（bigram のみ → `'first'` → `'edge'`）：8.8 → 9.9 → 10.9（中国語）、14.4 → 15.9 → 17.3（日本語）、12.2 → 16.7 → 21.0（韓国語）。bigram のみのクエリに対する中央値のクエリ時間（1 台のマシンで 1 回実行）：`'first'` で ×1.7、×1.2、×5.0、`'edge'` で ×2.5、×1.7、×9.6。
 
@@ -162,7 +162,7 @@ amalgamation（`sqlite3.c`）には `-DSQLITE_ENABLE_FTS5` が必要です。な
 - 全角 ASCII と半角カタカナ（濁点・半濁点を含む）、および 臺→台、裡→裏、羣→群、峯→峰、綫→線、衞→衛、爲→為、眞→真、敎→教、册→冊、祕→秘、啓→啟、淸→清、靑→青 を索引時・検索時に正規化します。その他の繁体字・簡体字変換はしません。NFD のテキスト（結合用濁点付きのかな、字母に分かれたハングル）は合成するので、NFC のクエリで見つかります。
 - 索引の内容はバージョンによって変わるので、アップグレード後は既存のインデックスを再構築してください：`INSERT INTO t(t) VALUES('rebuild')`。
 - 漢字、ひらがな、カタカナ、ハングル、および 々〆〇 を CJK として扱います。その他の CJK の句読点は区切りです。
-- 法令 47,281 条でのインデックスサイズ：`unicode61` 11.7 MB、`cjk` 18.3 MB、`cjk unigram 1` 26.3 MB、`trigram` 27.7 MB。`cjk` は `trigram` より約 3 分の 1 小さくなります。
+- 法令 47,281 条でのインデックスサイズ：`unicode61` 11.7 MB、`cjk` 18.3 MB、`cjk unigram 1` 26.3 MB、`trigram` 27.7 MB。`cjk` は `trigram` より約 3 分の 1 小さくなります。アプリケーション側での bigram 書き換え（[cjk-fts-bench](https://github.com/Ray0907/cjk-fts-bench)）と比べると、`cjk` は run の先頭・末尾文字も索引するため転置インデックス単体は 15–60% 大きい一方、標準 FTS5 テーブルでは 12–35% 小さくなります（結果表示用に別保存する原文コピーを含めると 38–50% 小）。
 
 ## 対応する文字
 
@@ -178,11 +178,13 @@ amalgamation（`sqlite3.c`）には `-DSQLITE_ENABLE_FTS5` が必要です。な
 
 | | 方式 | 依存 |
 |---|---|---|
-| `cjk`（本プロジェクト） | 文字 bigram、残りは unicode61 | なし、C 551 行 |
+| `cjk`（本プロジェクト） | 文字 bigram、残りは unicode61 | なし、C 570 行 |
 | [wangfenjin/simple](https://github.com/wangfenjin/simple) | 1 文字単位、任意で jieba と拼音 | C++、jieba 辞書 |
-| [streetwriters/sqlite-better-trigram](https://github.com/streetwriters/sqlite-better-trigram) | 短い語にフォールバックする trigram | TypeScript |
+| [streetwriters/sqlite-better-trigram](https://github.com/streetwriters/sqlite-better-trigram) | 漢字とかなは 1 文字単位、それ以外（ハングルを含む）は空白区切りの trigram | なし（C。SQLite の `fts5_unicode2.c` が必要） |
 | [cwt/fts5-icu-tokenizer](https://github.com/cwt/fts5-icu-tokenizer) | ICU の word break iterator | ICU データ |
 | 組み込み `trigram` | 文字 trigram | なし |
+
+12 種類の構成での部分一致再現率、MIRACL ランキング、インデックスサイズ、クエリ遅延の比較は [cjk-fts-bench](https://github.com/Ray0907/cjk-fts-bench) を参照してください。
 
 ## なぜ辞書ではなく bigram か
 

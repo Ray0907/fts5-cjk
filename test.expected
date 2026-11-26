@@ -157,6 +157,13 @@ sqlite
 1
 "日月潭紅茶產" "南投縣魚池鄉"
 1
+# Q5 cjk_query composes NFD kana and Hangul jamo
+"한"*|"が"*|"ｶﾞ"*
+5
+1
+4
+"서울" "시"* "강남"
+5
 # R1 cjk_rank_query: bigrams plus each run's first character, or both edges
 "東" OR "東京" OR "京大" OR "大学" OR "学の" OR "の研" OR "研究"
 "東" OR "東京" OR "京大" OR "大学" OR "学の" OR "の研" OR "研究" OR "究"
